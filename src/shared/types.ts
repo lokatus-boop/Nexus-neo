@@ -41,6 +41,8 @@ export interface SessionConfig {
   x11?: boolean;
   keepAliveSec?: number;
   tunnels?: TunnelConfig[];
+  /** Guarda la salida de esta sesión en un archivo de registro. */
+  logSession?: boolean;
   /** Abre el panel SFTP automáticamente al conectar. */
   autoSftp?: boolean;
   /** Macro que se ejecuta al abrir la sesión. */
@@ -61,7 +63,12 @@ export interface SessionConfig {
   parity?: 'none' | 'even' | 'odd' | 'mark' | 'space';
   localEcho?: boolean;
 
-  // RDP / VNC (cliente externo en el MVP)
+  /** VNC: usar el cliente externo en lugar del visor integrado. */
+  vncExternal?: boolean;
+  /** VNC: sólo ver (no enviar teclado ni ratón). */
+  vncViewOnly?: boolean;
+
+  // RDP / VNC
   rdpFullscreen?: boolean;
   rdpResolution?: string;
 }
@@ -92,6 +99,14 @@ export interface Settings {
   vncClient: string;
   /** Minutos de inactividad para bloquear la bóveda (0 = nunca). */
   vaultAutoLockMin: number;
+  /** Guarda la salida de todas las sesiones en archivos de registro. */
+  logAllSessions: boolean;
+  /** Carpeta de registros (vacío = carpeta de datos/logs). */
+  logDir: string;
+  /** Quita colores y secuencias de control de los registros. */
+  logStripAnsi: boolean;
+  /** Reintenta conectar automáticamente si se cae una sesión remota. */
+  autoReconnect: boolean;
 }
 
 export interface SecretEntry {

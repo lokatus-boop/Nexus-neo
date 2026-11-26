@@ -265,3 +265,15 @@ legend { padding: 0 6px; font-size: 12px; font-weight: 600; color: var(--accent)
 .sev-notice .log-msg { color: var(--accent); }
 .sev-debug .log-msg { color: var(--muted); }
 body.servers-open #toasts { right: 436px; }
+
+/* ---------- Vista dividida ---------- */
+#panes[class^='layout-']:not(.layout-single) { display: grid; gap: 3px; background: var(--border); }
+#panes.layout-cols2 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr; }
+#panes.layout-rows2 { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
+#panes.layout-grid4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+#panes:not(.layout-single) > .pane { position: relative; inset: auto; min-width: 0; min-height: 0; background: var(--term-bg); outline: 2px solid transparent; outline-offset: -2px; }
+#panes:not(.layout-single) > .pane.focused { outline-color: var(--accent); }
+#panes:not(.layout-single) > #welcome { display: none; }
+.cell-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--muted); background: var(--bg); cursor: pointer; min-height: 0; }
+.cell-empty.focused { outline: 2px dashed var(--accent); outline-offset: -6px; }
+.tab.in-view { color: var(--text); background: color-mix(in srgb, var(--accent) 8%, transparent); }

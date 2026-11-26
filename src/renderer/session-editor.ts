@@ -34,6 +34,7 @@ export async function editSession(initial: Partial<SessionConfig>, ctx: EditorCo
   const folderList = el('datalist', { id: 'folder-list' }, ...folders.map((f) => el('option', { value: f })));
   const color = el('input', { type: 'color', value: s.color || '#2dd4bf' });
   const useColor = checkbox('Color de pestaña', !!s.color);
+  const logSession = checkbox('Guardar registro de esta sesión en archivo', !!s.logSession);
   const notes = el('textarea', { rows: '2', placeholder: 'Notas (opcional)' }) as HTMLTextAreaElement;
   notes.value = s.notes || '';
 
@@ -120,6 +121,8 @@ export async function editSession(initial: Partial<SessionConfig>, ctx: EditorCo
   // --- RDP ---
   const rdpFull = checkbox('Pantalla completa', !!s.rdpFullscreen);
   const rdpRes = input({ value: s.rdpResolution || '', placeholder: '1920x1080' });
+  const vncExternal = checkbox('Abrir con el cliente VNC del sistema en lugar del visor integrado', !!s.vncExternal);
+  const vncTunnel = select([['', '— Conexión directa —'], ...ctx.sessions.filter((x) => x.kind === 'ssh').map((x) => [x.id, `${x.name} (${x.host})`] as [string, string])], s.kind === 'vnc' ? s.jumpSessionId || '' : '');
 
   const sections = {
     net: el('fieldset', {}, el('legend', {}, 'Conexión'), el('div', { class: 'grid3' }, field('Host', host), field('Puerto', port), field('Usuario', username))),
@@ -138,8 +141,11 @@ export async function editSession(initial: Partial<SessionConfig>, ctx: EditorCo
     serial: el('fieldset', {}, el('legend', {}, 'Puerto serie'),
       el('div', { class: 'grid3' }, field('Puerto', serialPath), field('Baudios', baud), field('Bits de datos', dataBits)),
       el('div', { class: 'grid3' }, field('Bits de parada', stopBits), field('Paridad', parity), el('div', {}, localEcho.wrap)), serialList),
+    vnc: el('fieldset', {}, el('legend', {}, 'VNC'),
+      field('Túnel a través de la sesión SSH', vncTunnel, 'Conecta al VNC a través de un servidor SSH (p. ej. host 127.0.0.1 si el VNC escucha sólo en local).'),
+      vncExternal.wrap),
     rdp: el('fieldset', {}, el('legend', {}, 'Escritorio remoto'), el('div', { class: 'grid2' }, field('Resolución', rdpRes), el('div', {}, rdpFull.wrap)),
-      el('small', { class: 'hint' }, 'En esta versión RDP y VNC se abren con el cliente del sistema (mstsc, xfreerdp, vncviewer). El visor integrado está en la hoja de ruta.')),
+      el('small', { class: 'hint' }, 'RDP se abre con el cliente del sistema (mstsc en Windows, xfreerdp en Linux). El visor RDP integrado está en la hoja de ruta.')),
   };
 
   const update = () => {
@@ -148,7 +154,9 @@ export async function editSession(initial: Partial<SessionConfig>, ctx: EditorCo
     sections.ssh.style.display = sections.sshOpts.style.display = sections.tunnels.style.display = k === 'ssh' ? '' : 'none';
     sections.local.style.display = k === 'local' ? '' : 'none';
     sections.serial.style.display = k === 'serial' ? '' : 'none';
-    sections.rdp.style.display = k === 'rdp' || k === 'vnc' ? '' : 'none';
+    sections.rdp.style.display = k === 'rdp' ? '' : 'none';
+    sections.vnc.style.display = k === 'vnc' ? '' : 'none';
+    logSession.wrap.style.display = k === 'rdp' || k === 'vnc' ? 'none' : '';
     username.parentElement!.style.display = k === 'vnc' ? 'none' : '';
     keyPath.parentElement!.parentElement!.style.display = auth.value === 'key' ? '' : 'none';
   };
@@ -161,8 +169,9 @@ export async function editSession(initial: Partial<SessionConfig>, ctx: EditorCo
 
   const body = el('div', { class: 'session-form' },
     el('div', { class: 'grid3' }, field('Tipo', kind), field('Nombre', name), field('Carpeta', folder)), folderList,
-    sections.net, sections.ssh, sections.sshOpts, sections.tunnels, sections.local, sections.serial, sections.rdp,
+    sections.net, sections.ssh, sections.sshOpts, sections.tunnels, sections.local, sections.serial, sections.rdp, sections.vnc,
     el('div', { class: 'row' }, useColor.wrap, color),
+    logSession.wrap,
     field('Notas', notes),
   );
   update();
@@ -186,6 +195,7 @@ export async function editSession(initial: Partial<SessionConfig>, ctx: EditorCo
           folder: folder.value.trim().replace(/^\/+|\/+$/g, ''),
           kind: k,
           color: useColor.box.checked ? color.value : undefined,
+          logSession: logSession.box.checked || undefined,
           notes: notes.value || undefined,
         };
         if (needsHost) {
@@ -218,6 +228,7 @@ export async function editSession(initial: Partial<SessionConfig>, ctx: EditorCo
           });
         }
         if (k === 'rdp') Object.assign(out, { rdpFullscreen: rdpFull.box.checked, rdpResolution: rdpRes.value.trim() || undefined });
+        if (k === 'vnc') Object.assign(out, { vncExternal: vncExternal.box.checked || undefined, jumpSessionId: vncTunnel.value || undefined });
 
         const secret = password.value || passphrase.value ? { password: password.value || undefined, passphrase: passphrase.value || undefined } : null;
         const saved = (await api.sessions.save(out, secret)) as SessionConfig;

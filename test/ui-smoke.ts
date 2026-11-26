@@ -1,11 +1,12 @@
 // Prueba de humo de la interfaz: arranca la app real de Electron con Playwright
 // y recorre los flujos principales contra un servidor SSH de pruebas.
 import { _electron as electron, Page } from 'playwright';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import { startTestServer } from './helpers/ssh-server';
+import { startFakeVnc } from './helpers/rfb-server';
 
 const shots = process.env.SHOTS_DIR || join(tmpdir(), 'nexus-shots');
 mkdirSync(shots, { recursive: true });
@@ -30,13 +31,15 @@ async function main() {
   writeFileSync(join(root, 'config.yaml'), 'a: 1');
   const srv = await startTestServer(root);
   const dataDir = mkdtempSync(join(tmpdir(), 'nexus-ui-data-'));
+  const fakeHome = mkdtempSync(join(tmpdir(), 'nexus-ui-home-'));
 
   const { createRequire } = await import('node:module');
   const executablePath = createRequire(join(process.cwd(), 'package.json'))('electron') as unknown as string;
   const app = await electron.launch({
     executablePath,
     args: ['.', '--no-sandbox'],
-    env: { ...process.env, NEXUS_NEO_DATA_DIR: dataDir, SHELL: '/bin/bash' },
+    // HOME aislado para no tocar ~/.ssh del usuario al probar el generador de claves.
+    env: { ...process.env, NEXUS_NEO_DATA_DIR: dataDir, ...(process.env.RFB_DEBUG ? { NEXUS_NEO_VNC_DEBUG: '1' } : {}), SHELL: '/bin/bash', HOME: fakeHome, USERPROFILE: fakeHome },
   });
   const page = await app.firstWindow();
   const errors: string[] = [];
@@ -165,6 +168,67 @@ async function main() {
   await page.waitForSelector('.srv-card.running', { state: 'detached' });
   await page.keyboard.press('Control+Shift+E');
   console.log('✔ servidores TFTP y Syslog');
+
+  // Vista dividida: dos pestañas lado a lado
+  await page.keyboard.press('Control+Shift+T');
+  await page.waitForFunction(() => document.querySelectorAll('.tab[data-state="connected"]').length >= 3);
+  await page.click('#btn-layout');
+  await page.click('.ctx-item:has-text("Cuadrícula de 4")');
+  await page.waitForFunction(() => document.querySelectorAll('#panes.layout-grid4 > .pane:not(.hidden)').length === 3);
+  await page.locator('.pane.focused .xterm').click();
+  await page.keyboard.type('echo DIVIDIDA_$((6*7))\n');
+  await page.waitForFunction(() => document.querySelector('.pane.focused .xterm-rows')?.textContent?.includes('DIVIDIDA_42'));
+  await page.evaluate(() => document.getElementById('toasts')?.remove());
+  await page.screenshot({ path: join(shots, '08-vista-dividida.png') });
+  await page.click('#btn-layout');
+  await page.click('.ctx-item:has-text("Una pestaña")');
+  await page.waitForFunction(() => document.querySelectorAll('#panes > .pane:not(.hidden)').length === 1);
+  console.log('✔ vista dividida');
+
+  // Generador de claves SSH e instalación en el servidor de la pestaña SSH
+  await page.click('.tab:has-text("Servidor de pruebas")');
+  await page.click('#btn-keys');
+  await page.click('.modal .btn:has-text("Generar nueva")');
+  const gen = page.locator('.modal').last();
+  await gen.locator('.field:has-text("Nombre del archivo") input').fill('nexus_prueba_ui');
+  await gen.locator('.btn.primary:has-text("Generar")').click();
+  await page.waitForSelector('.modal:has-text("Instalar clave")');
+  await page.locator('.modal').last().locator('.btn.primary:has-text("Instalar")').click();
+  await page.waitForSelector('.macro-row:has-text("nexus_prueba_ui")');
+  await page.waitForSelector('.toast:has-text("añadida a authorized_keys")');
+  for (let i = 0; i < 50 && !(existsSync(join(root, '.ssh', 'authorized_keys')) && readFileSync(join(root, '.ssh', 'authorized_keys'), 'utf8')); i++) await page.waitForTimeout(100);
+  assert.match(readFileSync(join(root, '.ssh', 'authorized_keys'), 'utf8'), /^ssh-ed25519 \S+ nexus-neo$/m);
+  await page.locator('.modal .btn.primary:has-text("Cerrar")').click();
+  console.log('✔ claves SSH');
+
+  // Visor VNC integrado
+  const vnc = await startFakeVnc();
+  const qc = page.locator('#quick-connect');
+  await qc.fill(`vnc://127.0.0.1:${vnc.port}`);
+  const [vncWin] = await Promise.all([app.waitForEvent('window'), qc.press('Enter')]);
+  vncWin.on('pageerror', (e: Error) => {
+    errors.push(`[vnc] ${e.message}`);
+    if (process.env.RFB_DEBUG) console.log('[vnc-error]', e.stack);
+  });
+  if (process.env.RFB_DEBUG) vncWin.on('console', (m) => console.log('[vnc-console]', m.text().slice(0, 160)));
+  await vncWin.waitForSelector('#status.ok', { timeout: 15000 });
+  await vncWin.waitForFunction(() => {
+    const c = document.querySelector('#screen canvas') as HTMLCanvasElement | null;
+    if (!c || c.width < 300) return false;
+    const ctx = c.getContext('2d')!;
+    const l = ctx.getImageData(10, 10, 1, 1).data;
+    const r = ctx.getImageData(c.width - 10, 10, 1, 1).data;
+    return l[0] > 200 && l[2] < 50 && r[2] > 200 && r[0] < 50;
+  }, null, { timeout: 15000 });
+  await vncWin.locator('#screen canvas').click();
+  await vncWin.keyboard.press('a');
+  for (let i = 0; i < 50 && !vnc.keys.length; i++) await vncWin.waitForTimeout(100);
+  assert.ok(vnc.keys.includes(0x61), 'el servidor VNC debe recibir la tecla "a"');
+  assert.ok(vnc.pointerEvents > 0, 'el servidor VNC debe recibir eventos de ratón');
+  await vncWin.screenshot({ path: join(shots, '09-visor-vnc.png') });
+  await vncWin.close();
+  await vnc.close();
+  console.log('✔ visor VNC integrado');
 
   // Tema claro
   await page.click('#btn-settings');

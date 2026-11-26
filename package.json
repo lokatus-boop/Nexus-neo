@@ -20,6 +20,7 @@
   },
   "license": "MIT",
   "dependencies": {
+    "@novnc/novnc": "^1.6.0",
     "node-pty": "^1.1.0",
     "serialport": "^13.0.0",
     "ssh2": "^1.17.0"

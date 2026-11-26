@@ -18,6 +18,10 @@ export const DEFAULT_SETTINGS: Settings = {
   rdpClient: '',
   vncClient: '',
   vaultAutoLockMin: 30,
+  logAllSessions: false,
+  logDir: '',
+  logStripAnsi: true,
+  autoReconnect: true,
 };
 
 class JsonFile<T> {
