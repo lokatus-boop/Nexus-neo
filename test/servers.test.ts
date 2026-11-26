@@ -107,6 +107,7 @@ test('TFTP: rechaza escritura si está deshabilitada', async () => {
 
 test('FTP: login, listado, descarga, subida (pasivo y activo)', { skip: !curlHas('ftp') && 'curl sin FTP' }, async () => {
   const srv = new FtpServer(cfg('ftp', { username: 'admin', password: 'clave', pasvMin: 52000, pasvMax: 52100 }));
+  srv.on('log', (e: ServerLogEntry) => e.level !== 'info' && console.log('[ftp]', e.message));
   await srv.start();
   const port = srv.boundPort()!;
   const base = `ftp://127.0.0.1:${port}`;
@@ -146,6 +147,7 @@ test('FTP: login, listado, descarga, subida (pasivo y activo)', { skip: !curlHas
 
 test('FTP: acceso anónimo de sólo lectura', { skip: !curlHas('ftp') && 'curl sin FTP' }, async () => {
   const srv = new FtpServer(cfg('ftp', { anonymous: true, allowWrite: false, pasvMin: 52200, pasvMax: 52300 }));
+  srv.on('log', (e: ServerLogEntry) => e.level !== 'info' && console.log('[ftp-anon]', e.message));
   await srv.start();
   const base = `ftp://127.0.0.1:${srv.boundPort()}`;
   try {

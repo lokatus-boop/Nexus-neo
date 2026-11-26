@@ -20,6 +20,20 @@ function mdtm(st: Stats): string {
   return new Date(st.mtimeMs).toISOString().replace(/[-:T]/g, '').slice(0, 14);
 }
 
+/**
+ * Envía un archivo por la conexión de datos. Algunos clientes cierran el socket en cuanto
+ * reciben el último byte, lo que hace fallar a pipeline() aunque la transferencia esté completa.
+ */
+async function sendStream(path: string, start: number, expected: number, s: Socket): Promise<void> {
+  try {
+    await pipeline(createReadStream(path, { start }), s);
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    const benign = code === 'ERR_STREAM_PREMATURE_CLOSE' || code === 'EPIPE' || code === 'ECONNRESET';
+    if (!(benign && s.bytesWritten >= expected)) throw e;
+  }
+}
+
 function safeEq(a: string, b: string): boolean {
   const x = Buffer.from(a);
   const y = Buffer.from(b);
@@ -133,6 +147,7 @@ class FtpSession {
       this.reply(226, 'Transferencia completada');
     } catch (e) {
       s.destroy();
+      this.srv.note('warn', `${this.who} transferencia fallida: ${(e as NodeJS.ErrnoException).code || ''} ${(e as Error).message}`);
       this.reply(451, `Error: ${(e as Error).message}`);
     } finally {
       this.closePasv();
@@ -259,7 +274,7 @@ class FtpSession {
           this.restOffset = 0;
           const t0 = Date.now();
           return this.withData((s) =>
-            this.srv.trackTransfer(pipeline(createReadStream(p.real, { start }), s)).then(() =>
+            this.srv.trackTransfer(sendStream(p.real, start, st.size - start, s)).then(() =>
               this.srv.note('transfer', `${this.who} descargó ${p.virt} (${st.size - start} bytes, ${((Date.now() - t0) / 1000).toFixed(1)} s)`)));
         }
         case 'STOR':
