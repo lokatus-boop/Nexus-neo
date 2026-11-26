@@ -14,7 +14,10 @@
     "dist:linux": "npm run build:prod && electron-builder --linux",
     "dist:win": "npm run build:prod && electron-builder --win"
   },
-  "author": "LuismiSanz",
+  "author": {
+    "name": "LuismiSanz",
+    "email": "232393454+lokatus-boop@users.noreply.github.com"
+  },
   "license": "MIT",
   "dependencies": {
     "node-pty": "^1.1.0",
@@ -69,5 +72,6 @@
       "allowToChangeInstallationDirectory": true
     },
     "npmRebuild": false
-  }
+  },
+  "homepage": "https://github.com/lokatus-boop/nexus-neo"
 }
