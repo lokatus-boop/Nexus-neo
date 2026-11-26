@@ -2,7 +2,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { execFile } from 'node:child_process';
 import { createSocket } from 'node:dgram';
 import { connect } from 'node:net';
@@ -45,8 +45,8 @@ before(() => {
 });
 
 test('safeResolve impide salir de la carpeta raíz', () => {
-  assert.equal(safeResolve('/srv/x', 'a/b.txt'), join('/srv/x', 'a/b.txt'));
-  assert.equal(safeResolve('/srv/x', '/a.txt'), join('/srv/x', 'a.txt'));
+  assert.equal(safeResolve('/srv/x', 'a/b.txt'), resolve('/srv/x', 'a/b.txt'));
+  assert.equal(safeResolve('/srv/x', '/a.txt'), resolve('/srv/x', 'a.txt'));
   assert.equal(safeResolve('/srv/x', '../etc/passwd'), null);
   assert.equal(safeResolve('/srv/x', 'a/../../x2'), null);
   assert.equal(safeResolve('/srv/x', '..\\..\\win.ini'), null);
