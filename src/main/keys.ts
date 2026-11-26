@@ -37,6 +37,17 @@ export function validatePublicKey(line: string): string {
   return t;
 }
 
+// ssh2 genera de vez en cuando (~0,3 % en ed25519) una clave privada que él mismo no sabe leer.
+// Se comprueba cada par y se regenera si hace falta.
+export function generateKeyPairChecked(type: KeyType, opts: Record<string, unknown> = {}): { private: string; public: string } {
+  for (let i = 0; i < 10; i++) {
+    const pair = utils.generateKeyPairSync(type, opts as never);
+    const parsed = utils.parseKey(pair.private, opts.passphrase as string | undefined);
+    if (!(parsed instanceof Error)) return pair;
+  }
+  throw new Error('No se pudo generar una clave válida.');
+}
+
 export async function generateKey(opts: { type: KeyType; bits?: number; comment?: string; passphrase?: string; path: string; overwrite?: boolean }): Promise<KeyInfo> {
   if (!opts.overwrite && (existsSync(opts.path) || existsSync(`${opts.path}.pub`))) {
     throw new Error(`Ya existe una clave en ${opts.path}.`);
@@ -49,7 +60,7 @@ export async function generateKey(opts: { type: KeyType; bits?: number; comment?
     genOpts.cipher = 'aes256-ctr';
     genOpts.rounds = 16;
   }
-  const pair = utils.generateKeyPairSync(opts.type, genOpts as never);
+  const pair = generateKeyPairChecked(opts.type, genOpts);
   await fs.mkdir(join(opts.path, '..'), { recursive: true, mode: 0o700 });
   await fs.writeFile(opts.path, pair.private, { mode: 0o600 });
   await fs.writeFile(`${opts.path}.pub`, pair.public.trim() + '\n', { mode: 0o644 });

@@ -4,6 +4,7 @@ import { Server, utils, Connection } from 'ssh2';
 import { createServer, connect, AddressInfo, Server as NetServer } from 'node:net';
 import { promises as fs, constants as FS, Stats } from 'node:fs';
 import { join, normalize } from 'node:path';
+import { generateKeyPairChecked } from '../../src/main/keys';
 
 const { STATUS_CODE } = utils.sftp;
 
@@ -18,9 +19,7 @@ function toAttrs(st: Stats) {
 }
 
 export async function startTestServer(root: string, creds = { user: 'nexus', pass: 'secreto' }): Promise<TestServer> {
-  // ssh2 genera a veces (~0,3 %) una clave ed25519 que no sabe leer: se regenera.
-  let hostKey = utils.generateKeyPairSync('ed25519');
-  while (utils.parseKey(hostKey.private) instanceof Error) hostKey = utils.generateKeyPairSync('ed25519');
+  const hostKey = generateKeyPairChecked('ed25519');
   const server = new Server({ hostKeys: [hostKey.private] }, (client: Connection) => {
     const remoteListeners: NetServer[] = [];
     client.on('authentication', (ctx) => {
