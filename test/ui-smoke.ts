@@ -1,7 +1,7 @@
 // Prueba de humo de la interfaz: arranca la app real de Electron con Playwright
 // y recorre los flujos principales contra un servidor SSH de pruebas.
 import { _electron as electron, Page } from 'playwright';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
@@ -96,7 +96,6 @@ async function main() {
   await page.locator('.modal textarea.editor').fill('a: 2\n');
   await page.click('.modal .btn.primary');
   await page.waitForSelector('.modal', { state: 'detached' });
-  const { readFileSync } = await import('node:fs');
   assert.equal(readFileSync(join(root, 'config.yaml'), 'utf8'), 'a: 2\n');
   console.log('✔ editor remoto');
 
@@ -128,6 +127,44 @@ async function main() {
   await page.screenshot({ path: join(shots, '05-paleta.png') });
   await page.keyboard.press('Escape');
   console.log('✔ paleta de comandos');
+
+  // Servidores integrados: TFTP con curl y Syslog
+  await page.keyboard.press('Control+Shift+E');
+  await page.waitForSelector('#servers-panel:not(.hidden) .srv-card');
+  const tftpCard = page.locator('.srv-card:has(strong:text-is("TFTP"))');
+  await tftpCard.locator('.icon-btn[title="Configurar"]').click();
+  await tftpCard.locator('.srv-row:has-text("Carpeta raíz") input').fill(root);
+  await tftpCard.locator('.srv-row:has-text("Puerto") input').fill('16969');
+  await tftpCard.locator('.btn:has-text("Guardar")').click();
+  await page.waitForSelector('.srv-card:has(strong:text-is("TFTP")) .srv-form', { state: 'detached' });
+  await tftpCard.locator('.btn:has-text("Iniciar")').click();
+  await page.waitForSelector('.srv-card.running:has(strong:text-is("TFTP"))');
+  const { execFile } = await import('node:child_process');
+  const dl = join(tmpdir(), `nexus-ui-tftp-${Date.now()}.txt`);
+  await new Promise<void>((res, rej) => execFile('curl', ['-sS', '-o', dl, 'tftp://127.0.0.1:16969/docs/notas.txt'], (e) => (e ? rej(e) : res())));
+  assert.equal(readFileSync(dl, 'utf8'), 'hola');
+  await page.waitForSelector('.log-line.lvl-transfer:has-text("completada")');
+  const sysCard = page.locator('.srv-card:has(strong:text-is("Syslog"))');
+  await sysCard.locator('.icon-btn[title="Configurar"]').click();
+  await sysCard.locator('.srv-row:has-text("Carpeta de logs") input').fill(join(root, 'logs'));
+  await sysCard.locator('.srv-row:has-text("Puerto") input').fill('15514');
+  await sysCard.locator('.btn:has-text("Guardar")').click();
+  await sysCard.locator('.btn:has-text("Iniciar")').click();
+  await page.waitForSelector('.srv-card.running:has(strong:text-is("Syslog"))');
+  const { createSocket } = await import('node:dgram');
+  const u = createSocket('udp4');
+  for (const m of ['<187>sw-core-01: %LINK-3-UPDOWN: Interface Gi1/0/24, changed state to down', '<189>sw-core-01: %SYS-5-CONFIG_I: Configured from console by admin', '<190>ap-planta2: firmware 8.10.2 descargado por TFTP']) {
+    await new Promise<void>((r) => u.send(m, 15514, '127.0.0.1', () => r()));
+  }
+  u.close();
+  await page.waitForSelector('.log-line:has-text("changed state to down")');
+  await page.evaluate(() => document.getElementById('toasts')?.remove());
+  await page.screenshot({ path: join(shots, '07-servidores.png') });
+  await tftpCard.locator('.btn:has-text("Detener")').click();
+  await sysCard.locator('.btn:has-text("Detener")').click();
+  await page.waitForSelector('.srv-card.running', { state: 'detached' });
+  await page.keyboard.press('Control+Shift+E');
+  console.log('✔ servidores TFTP y Syslog');
 
   // Tema claro
   await page.click('#btn-settings');

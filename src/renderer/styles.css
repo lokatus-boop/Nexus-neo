@@ -224,3 +224,44 @@ legend { padding: 0 6px; font-size: 12px; font-weight: 600; color: var(--accent)
   .welcome-actions, .shortcuts { grid-template-columns: repeat(2, 1fr); }
   #quick-connect { width: 180px; }
 }
+
+/* ---------- Servidores integrados ---------- */
+#servers-panel { width: 420px; flex: none; display: flex; flex-direction: column; background: var(--panel); border-left: 1px solid var(--border); min-height: 0; user-select: text; }
+.srv-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px 4px; }
+.srv-head h3 { margin: 0; font-size: 14px; }
+.srv-ips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 4px 12px 8px; }
+.srv-ips .hint { margin: 0; }
+.chip { padding: 2px 9px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg); font-size: 11px; cursor: pointer; }
+.chip:hover { border-color: var(--accent); }
+.chip.active { background: color-mix(in srgb, var(--accent) 18%, transparent); border-color: var(--accent); color: var(--accent); }
+.srv-cards { display: flex; flex-direction: column; gap: 8px; padding: 0 12px 10px; overflow: auto; flex: 0 1 auto; max-height: 60%; }
+.srv-card { padding: 9px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 9px; }
+.srv-card.running { border-color: color-mix(in srgb, #4ade80 45%, var(--border)); }
+.srv-card-head { display: flex; align-items: center; gap: 10px; }
+.srv-card-head .grow { flex: 1; min-width: 0; }
+.srv-card-head .mono { font-size: 11px; cursor: copy; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin: 0; }
+.srv-card .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
+.srv-card .dot.on { background: #4ade80; box-shadow: 0 0 0 3px color-mix(in srgb, #4ade80 25%, transparent); }
+.srv-card .dot.err { background: var(--danger); }
+.btn.sm { height: 26px; padding: 0 10px; font-size: 12px; }
+.small { font-size: 11px; margin-top: 6px; }
+.srv-form { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border); }
+.srv-form .hint { margin: 0 0 8px; }
+.srv-row { display: flex; flex-direction: column; gap: 3px; margin-bottom: 8px; font-size: 12px; color: var(--muted); min-width: 0; }
+.srv-row input, .srv-row select { width: 100%; padding: 5px 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; outline: none; color: var(--text); }
+.srv-row .row { align-items: center; gap: 4px; }
+.srv-row .row input { flex: 1; }
+.row.end { justify-content: flex-end; }
+.srv-log-head { display: flex; align-items: center; justify-content: space-between; padding: 6px 12px; border-top: 1px solid var(--border); }
+.srv-filters { display: flex; gap: 4px; }
+.srv-log { flex: 1; min-height: 120px; overflow: auto; padding: 4px 12px 10px; font-family: var(--font-mono); font-size: 11px; }
+.log-line { display: grid; grid-template-columns: auto 46px 1fr; gap: 8px; padding: 2px 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent); }
+.log-time { color: var(--muted); }
+.log-kind { color: var(--accent2); }
+.log-msg { word-break: break-word; }
+.lvl-error .log-msg, .sev-crit .log-msg, .sev-err .log-msg { color: var(--danger); }
+.lvl-warn .log-msg, .sev-warn .log-msg { color: var(--warn); }
+.lvl-transfer .log-msg { color: #4ade80; }
+.sev-notice .log-msg { color: var(--accent); }
+.sev-debug .log-msg { color: var(--muted); }
+body.servers-open #toasts { right: 436px; }

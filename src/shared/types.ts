@@ -154,3 +154,52 @@ export interface ImportResult {
   skipped: number;
   sessions: SessionConfig[];
 }
+
+// ---------------------------------------------------------------------------
+// Servidores integrados (TFTP, FTP, HTTP, Syslog)
+
+export type ServerKind = 'tftp' | 'ftp' | 'http' | 'syslog';
+
+export interface ServerConfig {
+  id: string;
+  kind: ServerKind;
+  name: string;
+  /** Carpeta raíz servida (o donde se guardan los logs en Syslog). */
+  rootDir: string;
+  port: number;
+  bindHost: string;
+  /** Permite subir/sobrescribir archivos (TFTP WRQ, FTP STOR, HTTP PUT). */
+  allowWrite: boolean;
+  // FTP
+  anonymous?: boolean;
+  username?: string;
+  password?: string;
+  pasvMin?: number;
+  pasvMax?: number;
+  // Syslog
+  syslogTcp?: boolean;
+  syslogToFile?: boolean;
+}
+
+export interface ServerStatus {
+  id: string;
+  running: boolean;
+  error?: string;
+  /** Transferencias/conexiones activas. */
+  active: number;
+}
+
+export interface ServerLogEntry {
+  serverId: string;
+  time: number;
+  level: 'info' | 'warn' | 'error' | 'transfer' | 'syslog';
+  message: string;
+  /** Sólo Syslog: datos del mensaje recibido. */
+  syslog?: { from: string; facility: number; severity: number; text: string };
+}
+
+export interface NetInterfaceInfo {
+  name: string;
+  address: string;
+  family: 'IPv4' | 'IPv6';
+}

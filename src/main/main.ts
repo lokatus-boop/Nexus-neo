@@ -12,8 +12,9 @@ import { TelnetConnection } from './protocols/telnet';
 import { SerialConnection, listSerialPorts } from './protocols/serial';
 import { launchExternal } from './protocols/external';
 import * as sftpOps from './sftp-ops';
+import { ServerManager, defaultServers, listInterfaces } from './servers/manager';
 import { buildNexusExport, parseNexusExport, parseSshConfig } from './importers';
-import type { AuthPrompt, HostKeyPrompt, Macro, OpenRequest, SecretEntry, SessionConfig, Settings, TunnelConfig } from '../shared/types';
+import type { AuthPrompt, HostKeyPrompt, Macro, OpenRequest, SecretEntry, ServerConfig, SessionConfig, Settings, TunnelConfig } from '../shared/types';
 
 // ---------------------------------------------------------------------------
 // Directorio de datos: modo portable si existe un archivo "portable" junto al ejecutable.
@@ -29,6 +30,9 @@ let vault: Vault;
 let win: BrowserWindow | null = null;
 const conns = new Map<string, TerminalConnection>();
 const pending = new Map<string, (v: unknown) => void>();
+const servers = new ServerManager();
+/** Contraseñas FTP cuando la bóveda no está disponible (sólo en memoria). */
+const serverPasswords = new Map<string, string>();
 let lastActivity = Date.now();
 
 function send(channel: string, ...args: unknown[]): void {
@@ -290,6 +294,56 @@ function registerIpc(): void {
     };
   });
 
+  // --- Servidores integrados ---------------------------------------------
+  const serverList = async (): Promise<ServerConfig[]> => {
+    let list = await store.listServers();
+    if (!list) {
+      list = defaultServers();
+      await store.saveServers(list);
+    }
+    return list;
+  };
+  const serverPassword = (id: string): string | undefined =>
+    serverPasswords.get(id) ?? (vault.isUnlocked() ? vault.get(`server:${id}`)?.password : undefined);
+  servers.on('status', async () => send('servers:status', servers.status(await serverList())));
+  servers.on('log', (e) => send('servers:log', e));
+  handle('servers:list', async () => {
+    const list = await serverList();
+    return {
+      configs: list.map((c) => ({ ...c, password: undefined, hasPassword: !!serverPassword(c.id) })),
+      status: servers.status(list),
+      logs: servers.recentLogs(),
+      interfaces: listInterfaces(),
+      vaultUnlocked: vault.isUnlocked(),
+    };
+  });
+  handle('servers:save', async (cfg: ServerConfig) => {
+    const list = await serverList();
+    const i = list.findIndex((c) => c.id === cfg.id);
+    if (i < 0) throw new Error('Servidor desconocido');
+    if (servers.isRunning(cfg.id)) throw new Error('Detén el servidor antes de cambiar su configuración.');
+    if (cfg.password) {
+      if (vault.isUnlocked()) {
+        await vault.set(`server:${cfg.id}`, { password: cfg.password });
+        serverPasswords.delete(cfg.id);
+      } else serverPasswords.set(cfg.id, cfg.password);
+    }
+    list[i] = { ...list[i], ...cfg, id: list[i].id, kind: list[i].kind, password: undefined };
+    await store.saveServers(list);
+  });
+  handle('servers:start', async (id: string) => {
+    const cfg = (await serverList()).find((c) => c.id === id);
+    if (!cfg) throw new Error('Servidor desconocido');
+    await servers.start({ ...cfg, password: serverPassword(id) });
+  });
+  handle('servers:stop', (id: string) => servers.stop(id));
+  handle('servers:clearLogs', () => servers.clearLogs());
+  handle('dialog:pickDir', async (title: string, current?: string) => {
+    const r = await dialog.showOpenDialog(win!, { title, defaultPath: current, properties: ['openDirectory', 'createDirectory'] });
+    return r.canceled ? null : r.filePaths[0];
+  });
+  handle('shell:openPath', (p: string) => shell.openPath(p));
+
   // --- Utilidades ----------------------------------------------------------
   handle('dialog:pickFile', async (title: string) => {
     const r = await dialog.showOpenDialog(win!, { title, defaultPath: join(homedir(), '.ssh'), properties: ['openFile', 'showHiddenFiles'] });
@@ -318,4 +372,6 @@ app.whenReady().then(async () => {
   createWindow();
 });
 
-app.on('window-all-closed', () => app.quit());
+app.on('window-all-closed', () => {
+  void servers.stopAll().finally(() => app.quit());
+});

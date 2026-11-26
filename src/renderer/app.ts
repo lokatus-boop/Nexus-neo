@@ -7,6 +7,9 @@ import { editSession } from './session-editor';
 import { parseQuickConnect } from './quick-connect';
 import { parseMacro, runMacro, encodeRecording } from './macro-engine';
 import { THEMES, themeById, applyUiTheme } from './themes';
+import { ServersPanel } from './servers-panel';
+
+const serversPanel = new ServersPanel();
 import type { AuthPrompt, HostKeyPrompt, Macro, SessionConfig, Settings, TunnelStatus, VaultStatus } from '../shared/types';
 
 interface AppInfo {
@@ -580,6 +583,7 @@ async function palette(): Promise<void> {
     { label: 'Multi-ejecución', sub: 'Acción', run: toggleMultiExec },
     { label: 'Macros…', sub: 'Acción', run: () => void macrosDialog() },
     { label: 'Túneles SSH…', sub: 'Acción', run: () => void tunnelsDialog() },
+    { label: 'Servidores TFTP / FTP / HTTP / Syslog', sub: 'Acción', run: () => void serversPanel.toggle(true) },
     { label: 'Ajustes…', sub: 'Acción', run: () => void settingsDialog() },
     { label: 'Importar ~/.ssh/config', sub: 'Acción', run: () => void importSessions('ssh-config') },
     ...state.macros.map((m) => ({ label: `Ejecutar macro: ${m.name}`, sub: 'Macro', run: () => void playMacro(m) })),
@@ -670,7 +674,7 @@ function renderWelcome(): void {
       recent.length ? el('div', { class: 'welcome-recent' }, el('h3', {}, 'Sesiones'), ...recent.map((s) =>
         el('button', { class: 'recent', onclick: () => void openSession(s) }, icon(kindIcon(s.kind), 14), el('span', {}, s.name), el('small', {}, s.host || s.serialPath || s.kind)))) : null,
       el('div', { class: 'shortcuts' },
-        ...[['Ctrl+Mayús+T', 'Terminal local'], ['Ctrl+Mayús+W', 'Cerrar pestaña'], ['Ctrl+Tab', 'Siguiente pestaña'], ['Ctrl+Mayús+M', 'Multi-ejecución'], ['Ctrl+Mayús+F', 'Buscar'], ['Ctrl+Mayús+B', 'Panel lateral'], ['Ctrl+Mayús+S', 'Panel SFTP'], ['Ctrl+ +/-', 'Zoom']]
+        ...[['Ctrl+Mayús+E', 'Servidores'], ['Ctrl+Mayús+T', 'Terminal local'], ['Ctrl+Mayús+W', 'Cerrar pestaña'], ['Ctrl+Tab', 'Siguiente pestaña'], ['Ctrl+Mayús+M', 'Multi-ejecución'], ['Ctrl+Mayús+F', 'Buscar'], ['Ctrl+Mayús+B', 'Panel lateral'], ['Ctrl+Mayús+S', 'Panel SFTP'], ['Ctrl+ +/-', 'Zoom']]
           .map(([k, d]) => el('div', {}, el('kbd', {}, k), el('span', {}, d)))),
     ),
   );
@@ -707,6 +711,7 @@ function buildLayout(): void {
         tbtn('btn-macros', 'keyboard', 'Macros', () => void macrosDialog()),
         tbtn('btn-record', 'record', 'Grabar macro', () => void toggleRecording()),
         tbtn('btn-tunnels', 'tunnel', 'Túneles SSH', () => void tunnelsDialog(), el('span', { id: 'tunnel-count', class: 'badge' })),
+        tbtn('btn-servers', 'server', 'Servidores TFTP / FTP / HTTP / Syslog (Ctrl+Mayús+E)', () => void serversPanel.toggle(), el('span', { id: 'servers-count', class: 'badge' })),
         tbtn('btn-vault', 'lock', 'Bóveda', () => void vaultDialog()),
         tbtn('btn-settings', 'settings', 'Ajustes', () => void settingsDialog()),
       ),
@@ -727,6 +732,7 @@ function buildLayout(): void {
           el('nav', { id: 'tabbar' }),
           el('div', { id: 'panes' }, el('div', { id: 'welcome' })),
         ),
+        serversPanel.root,
       ),
       el('footer', { id: 'statusbar' }, el('span', { id: 'status-left' }), el('span', { class: 'spacer' }), el('span', { id: 'status-right' })),
     ),
@@ -745,6 +751,7 @@ function bindShortcuts(): void {
     else if (mod && k === 'KeyB') document.body.classList.toggle('no-sidebar');
     else if (mod && k === 'KeyM') toggleMultiExec();
     else if (mod && k === 'KeyS') void state.active?.toggleSftp();
+    else if (mod && k === 'KeyE') void serversPanel.toggle();
     else if (e.ctrlKey && e.key === 'Tab') cycleTab(e.shiftKey ? -1 : 1);
     else if (e.ctrlKey && !e.shiftKey && (e.key === '=' || e.key === '+')) zoom(1);
     else if (e.ctrlKey && !e.shiftKey && e.key === '-') zoom(-1);
@@ -784,6 +791,11 @@ async function main(): Promise<void> {
     void refreshVault();
     toast('La bóveda se ha bloqueado por inactividad');
   });
+
+  serversPanel.onStatusChange = (n) => {
+    $('#servers-count').textContent = n ? String(n) : '';
+    $('#btn-servers').classList.toggle('active', n > 0);
+  };
 
   await refreshVault();
   if (state.vault.exists && !state.vault.unlocked) await unlockDialog();

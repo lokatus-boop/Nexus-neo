@@ -2,7 +2,7 @@
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { Macro, SessionConfig, Settings } from '../shared/types';
+import type { Macro, ServerConfig, SessionConfig, Settings } from '../shared/types';
 
 export const DEFAULT_SETTINGS: Settings = {
   theme: 'nexus-dark',
@@ -52,6 +52,7 @@ export class Store {
   private macros: JsonFile<Macro[]>;
   private settings: JsonFile<Partial<Settings>>;
   private known: JsonFile<Record<string, string>>;
+  private servers: JsonFile<ServerConfig[] | null>;
   private knownCache: Record<string, string> = {};
 
   constructor(readonly dir: string) {
@@ -59,6 +60,7 @@ export class Store {
     this.macros = new JsonFile(join(dir, 'macros.json'), () => []);
     this.settings = new JsonFile(join(dir, 'settings.json'), () => ({}));
     this.known = new JsonFile(join(dir, 'known_hosts.json'), () => ({}));
+    this.servers = new JsonFile(join(dir, 'servers.json'), () => null);
   }
 
   async init(): Promise<void> {
@@ -120,6 +122,16 @@ export class Store {
     const merged = { ...(await this.getSettings()), ...s };
     await this.settings.write(merged);
     return merged;
+  }
+
+  /** Devuelve los servidores guardados o null si nunca se han configurado. */
+  listServers(): Promise<ServerConfig[] | null> {
+    return this.servers.read();
+  }
+
+  async saveServers(list: ServerConfig[]): Promise<void> {
+    // Nunca se persisten contraseñas en claro: van a la bóveda.
+    await this.servers.write(list.map(({ password: _p, ...rest }) => rest));
   }
 
   knownHost(id: string): string | undefined {
