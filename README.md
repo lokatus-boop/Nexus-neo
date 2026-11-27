@@ -7,6 +7,8 @@ alternativa moderna y abierta a las «navajas suizas» de terminal para administ
 
 ![Sesión SSH con explorador SFTP](docs/screenshots/03-ssh-sftp.png)
 
+![Servidores TFTP, FTP, HTTP y Syslog integrados](docs/screenshots/07-servidores.png)
+
 ## Funcionalidades
 
 ### Disponibles en la versión 0.1 (MVP)
@@ -24,6 +26,7 @@ alternativa moderna y abierta a las «navajas suizas» de terminal para administ
 | **Telnet** | Con negociación de eco, SGA, tamaño de ventana (NAWS) y tipo de terminal. |
 | **Puerto serie** | Lista de puertos detectados, baudios, bits de datos/parada, paridad y eco local. |
 | **RDP / VNC** | Se abren con el cliente del sistema (`mstsc`, `xfreerdp`, `vncviewer` o el que configures). |
+| **Servidores integrados** | Panel lateral (`Ctrl+Mayús+E`) con **TFTP** (blksize/tsize, subida y bajada), **FTP** (pasivo/activo, usuario o anónimo), **HTTP** (listados, descargas reanudables, PUT opcional) y **Syslog** (UDP/TCP, colores por severidad y archivo diario). Arranque con un clic, carpeta raíz, puerto e interfaz configurables, IPs del equipo a mano y registro de transferencias en vivo. Ideal para actualizar firmware y guardar configuraciones de switches, routers y AP. |
 | **Multi-ejecución** | Escribe a la vez en todas las pestañas marcadas (casilla en cada pestaña). |
 | **Macros** | Editor de macros con escapes (`\n`, `\t`, `\e`, `\xHH`) y pausas `{sleep:ms}`, **grabación** de lo que tecleas, ejecución en una pestaña o en todas las de multi-ejecución, y macro de arranque por sesión. |
 | **Bóveda de credenciales** | Contraseña maestra, scrypt + AES-256-GCM, bloqueo manual y automático por inactividad, cambio de contraseña maestra. Los secretos nunca se guardan en claro. |
@@ -56,7 +59,7 @@ Funciones previstas para alcanzar y superar el conjunto completo de una suite pr
 - [ ] **Generador de claves SSH** (ed25519/RSA) y gestor de `authorized_keys`.
 - [ ] SFTP que **sigue la carpeta del terminal**, cola de transferencias en paralelo y reanudación.
 - [ ] **Registro de sesiones** automático a archivo y reproducción.
-- [ ] **Herramientas de red**: escáner de puertos, servidores TFTP/HTTP/FTP de un clic, ping/traceroute gráficos.
+- [ ] **Herramientas de red**: escáner de puertos, ping/traceroute gráficos, servidor DHCP mínimo para aprovisionar equipos y FTPS/SFTP integrados.
 - [ ] **Importación de sesiones** desde otras herramientas (archivos de exportación de clientes populares, PuTTY desde el registro de Windows).
 - [ ] Integración con el almacén de credenciales del sistema (Windows Credential Manager / libsecret) y llaves FIDO2.
 - [ ] Sincronización cifrada de sesiones entre equipos.
@@ -94,6 +97,7 @@ El flujo de GitHub Actions compila y prueba en Linux y Windows y publica los paq
 | `Ctrl+Mayús+W` | Cerrar pestaña |
 | `Ctrl+Tab` / `Ctrl+Mayús+Tab` | Pestaña siguiente / anterior |
 | `Ctrl+Mayús+K` | Paleta de comandos e ir a sesión |
+| `Ctrl+Mayús+E` | Panel de servidores (TFTP, FTP, HTTP, Syslog) |
 | `Ctrl+Mayús+M` | Activar/desactivar multi-ejecución |
 | `Ctrl+Mayús+S` | Mostrar/ocultar SFTP |
 | `Ctrl+Mayús+B` | Mostrar/ocultar el panel de sesiones |
@@ -111,6 +115,7 @@ src/
     store.ts       Sesiones, macros, ajustes y huellas conocidas (JSON)
     sftp-ops.ts    Operaciones SFTP de alto nivel
     importers.ts   Importación de ~/.ssh/config y exportaciones propias
+    servers/       Servidores integrados TFTP, FTP, HTTP y Syslog
   preload/         Puente IPC mínimo (contextIsolation + sandbox)
   renderer/        Interfaz (TypeScript sin framework + xterm.js)
   shared/          Tipos compartidos

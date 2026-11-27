@@ -276,7 +276,7 @@ export class Tab {
       return false;
     }
     // Deja pasar los atajos globales de la aplicación.
-    if (mod && ['KeyT', 'KeyW', 'KeyK', 'KeyB', 'KeyM', 'KeyS'].includes(e.code)) return false;
+    if (mod && ['KeyT', 'KeyW', 'KeyK', 'KeyB', 'KeyM', 'KeyS', 'KeyE'].includes(e.code)) return false;
     if (e.ctrlKey && e.key === 'Tab') return false;
     return true;
   }
