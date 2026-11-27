@@ -1,0 +1,77 @@
+{
+  "name": "nexus-neo",
+  "version": "0.1.0",
+  "description": "Cliente de acceso remoto multiplataforma: SSH, SFTP, Telnet, serie, túneles, X11, multi-ejecución y macros.",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "build:prod": "node scripts/build.mjs --prod",
+    "dev": "node scripts/build.mjs && electron .",
+    "start": "electron .",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node scripts/test.mjs",
+    "test:ui": "node scripts/build.mjs && node scripts/ui-test.mjs",
+    "dist:linux": "npm run build:prod && electron-builder --linux",
+    "dist:win": "npm run build:prod && electron-builder --win"
+  },
+  "author": {
+    "name": "LuismiSanz",
+    "email": "232393454+lokatus-boop@users.noreply.github.com"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "node-pty": "^1.1.0",
+    "serialport": "^13.0.0",
+    "ssh2": "^1.17.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.11",
+    "@types/ssh2": "^1.15.6",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-search": "^0.16.0",
+    "@xterm/addon-web-links": "^0.12.0",
+    "@xterm/xterm": "^6.0.0",
+    "electron": "^33.4.11",
+    "electron-builder": "^26.18.0",
+    "esbuild": "^0.28.2",
+    "playwright": "^1.63.0",
+    "typescript": "^7.0.2"
+  },
+  "productName": "Nexus Neo",
+  "build": {
+    "appId": "io.github.lokatusboop.nexusneo",
+    "productName": "Nexus Neo",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/node-pty/**",
+      "node_modules/@serialport/**",
+      "node_modules/cpu-features/**"
+    ],
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Network"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "npmRebuild": false
+  },
+  "homepage": "https://github.com/lokatus-boop/nexus-neo"
+}

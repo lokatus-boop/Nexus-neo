@@ -1,0 +1,321 @@
+import { app, BrowserWindow, dialog, ipcMain, shell, Menu, IpcMainInvokeEvent } from 'electron';
+import { existsSync, promises as fs } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { Store } from './store';
+import { Vault } from './vault';
+import { TerminalConnection, Prompter } from './protocols/base';
+import { SshConnection } from './protocols/ssh';
+import { LocalConnection, detectShells } from './protocols/local';
+import { TelnetConnection } from './protocols/telnet';
+import { SerialConnection, listSerialPorts } from './protocols/serial';
+import { launchExternal } from './protocols/external';
+import * as sftpOps from './sftp-ops';
+import { buildNexusExport, parseNexusExport, parseSshConfig } from './importers';
+import type { AuthPrompt, HostKeyPrompt, Macro, OpenRequest, SecretEntry, SessionConfig, Settings, TunnelConfig } from '../shared/types';
+
+// ---------------------------------------------------------------------------
+// Directorio de datos: modo portable si existe un archivo "portable" junto al ejecutable.
+function dataDir(): string {
+  if (process.env.NEXUS_NEO_DATA_DIR) return process.env.NEXUS_NEO_DATA_DIR;
+  const exeDir = dirname(process.execPath);
+  if (existsSync(join(exeDir, 'portable'))) return join(exeDir, 'data');
+  return join(app.getPath('userData'), 'data');
+}
+
+let store: Store;
+let vault: Vault;
+let win: BrowserWindow | null = null;
+const conns = new Map<string, TerminalConnection>();
+const pending = new Map<string, (v: unknown) => void>();
+let lastActivity = Date.now();
+
+function send(channel: string, ...args: unknown[]): void {
+  if (win && !win.isDestroyed()) win.webContents.send(channel, ...args);
+}
+
+function ask<T>(channel: string, payload: unknown): Promise<T> {
+  return new Promise((resolve) => {
+    const id = randomUUID();
+    pending.set(id, resolve as (v: unknown) => void);
+    send(channel, id, payload);
+  });
+}
+
+function prompterFor(connId: string): Prompter {
+  return {
+    hostKey: (p: HostKeyPrompt) => ask<boolean>('prompt:hostKey', { connId, ...p }),
+    auth: (p: AuthPrompt) => ask<string[] | null>('prompt:auth', { connId, ...p }),
+  };
+}
+
+function sshConn(connId: string): SshConnection {
+  const c = conns.get(connId);
+  if (!(c instanceof SshConnection)) throw new Error('La pestaña no es una sesión SSH conectada.');
+  return c;
+}
+
+function allTunnelStatus() {
+  return [...conns.values()].flatMap((c) =>
+    c instanceof SshConnection && c.tunnels
+      ? c.tunnels.status().map((t) => ({ ...t, sessionName: c.cfg.name }))
+      : [],
+  );
+}
+
+// ---------------------------------------------------------------------------
+function createWindow(): void {
+  win = new BrowserWindow({
+    width: 1400,
+    height: 880,
+    minWidth: 900,
+    minHeight: 560,
+    backgroundColor: '#0f1419',
+    title: 'Nexus Neo',
+    icon: existsSync(join(__dirname, '../build/icon.png')) ? join(__dirname, '../build/icon.png') : undefined,
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      spellcheck: false,
+    },
+  });
+  Menu.setApplicationMenu(null);
+  win.loadFile(join(__dirname, 'renderer/index.html'));
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//.test(url)) void shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  win.webContents.on('will-navigate', (e) => e.preventDefault());
+  win.on('closed', () => {
+    win = null;
+    for (const c of conns.values()) c.close();
+    conns.clear();
+  });
+  if (process.env.NEXUS_NEO_DEVTOOLS) win.webContents.openDevTools({ mode: 'detach' });
+}
+
+function handle(channel: string, fn: (...args: any[]) => unknown): void {
+  ipcMain.handle(channel, async (_e: IpcMainInvokeEvent, ...args: unknown[]) => {
+    lastActivity = Date.now();
+    return fn(...args);
+  });
+}
+
+function registerIpc(): void {
+  handle('app:info', async () => ({
+    platform: process.platform,
+    version: app.getVersion(),
+    shells: detectShells(),
+    dataDir: store.dir,
+    home: homedir(),
+  }));
+
+  // --- Sesiones -------------------------------------------------------------
+  handle('sessions:list', () => store.listSessions());
+  handle('sessions:save', async (s: SessionConfig, secret?: SecretEntry | null) => {
+    const saved = await store.saveSession(s);
+    if (secret && (secret.password || secret.passphrase)) {
+      if (!vault.isUnlocked()) throw new Error('Desbloquea o crea la bóveda para guardar contraseñas.');
+      await vault.set(saved.id, secret);
+    }
+    return saved;
+  });
+  handle('sessions:clearSecret', async (id: string) => vault.remove(id));
+  handle('sessions:delete', async (id: string) => {
+    await store.deleteSession(id);
+    await vault.remove(id);
+  });
+  handle('sessions:hasSecret', (id: string) => vault.has(id));
+  handle('sessions:import', async (kind: 'ssh-config' | 'file') => {
+    let sessions: SessionConfig[];
+    if (kind === 'ssh-config') {
+      const path = join(homedir(), '.ssh', 'config');
+      if (!existsSync(path)) throw new Error(`No se encontró ${path}`);
+      sessions = parseSshConfig(await fs.readFile(path, 'utf8'));
+    } else {
+      const r = await dialog.showOpenDialog(win!, { title: 'Importar sesiones', filters: [{ name: 'Nexus Neo', extensions: ['json'] }], properties: ['openFile'] });
+      if (r.canceled || !r.filePaths[0]) return { imported: 0, skipped: 0, sessions: [] };
+      sessions = parseNexusExport(await fs.readFile(r.filePaths[0], 'utf8'));
+    }
+    await store.addSessions(sessions);
+    return { imported: sessions.length, skipped: 0, sessions };
+  });
+  handle('sessions:export', async () => {
+    const r = await dialog.showSaveDialog(win!, { title: 'Exportar sesiones', defaultPath: 'nexus-neo-sesiones.json' });
+    if (r.canceled || !r.filePath) return false;
+    await fs.writeFile(r.filePath, buildNexusExport(await store.listSessions()));
+    return true;
+  });
+
+  // --- Macros y ajustes ----------------------------------------------------
+  handle('macros:list', () => store.listMacros());
+  handle('macros:save', (m: Macro) => store.saveMacro(m));
+  handle('macros:delete', (id: string) => store.deleteMacro(id));
+  handle('settings:get', () => store.getSettings());
+  handle('settings:save', (s: Partial<Settings>) => store.saveSettings(s));
+
+  // --- Bóveda --------------------------------------------------------------
+  handle('vault:status', async () => ({ exists: await vault.exists(), unlocked: vault.isUnlocked() }));
+  handle('vault:create', (pw: string) => vault.create(pw));
+  handle('vault:unlock', (pw: string) => vault.unlock(pw));
+  handle('vault:lock', () => vault.lock());
+  handle('vault:change', (oldPw: string, newPw: string) => vault.changePassword(oldPw, newPw));
+
+  // --- Conexiones ----------------------------------------------------------
+  handle('conn:open', async (connId: string, req: OpenRequest) => {
+    const cfg = req.session;
+    const settings = await store.getSettings();
+    if (cfg.kind === 'rdp' || cfg.kind === 'vnc') {
+      await launchExternal(cfg, settings);
+      return;
+    }
+    let conn: TerminalConnection;
+    const sessionsSnapshot = await store.listSessions();
+    switch (cfg.kind) {
+      case 'ssh':
+        conn = new SshConnection(
+          cfg,
+          {
+            prompter: prompterFor(connId),
+            knownHosts: { get: (id) => store.knownHost(id), set: (id, fp) => store.setKnownHost(id, fp) },
+            secretFor: (id) => (vault.isUnlocked() ? vault.get(id) : undefined),
+            sessionById: (id) => sessionsSnapshot.find((s) => s.id === id),
+            onTunnelsChanged: () => send('tunnels:changed', allTunnelStatus()),
+          },
+          connId,
+        );
+        break;
+      case 'local':
+        conn = new LocalConnection(cfg, settings.defaultLocalShell);
+        break;
+      case 'telnet':
+        conn = new TelnetConnection(cfg);
+        break;
+      case 'serial':
+        conn = new SerialConnection(cfg);
+        break;
+      default:
+        throw new Error(`Tipo de sesión no soportado: ${cfg.kind}`);
+    }
+    conns.set(connId, conn);
+    conn.on('data', (d: string) => send('conn:data', connId, d));
+    conn.on('state', (s: string, msg?: string) => {
+      send('conn:state', connId, s, msg);
+      if (s === 'closed' && conn instanceof SshConnection) send('tunnels:changed', allTunnelStatus());
+    });
+    try {
+      await conn.open(req.cols, req.rows);
+    } catch (e) {
+      conns.delete(connId);
+      conn.close();
+      throw e;
+    }
+  });
+  ipcMain.on('conn:write', (_e, connId: string, data: string) => {
+    lastActivity = Date.now();
+    conns.get(connId)?.write(data);
+  });
+  ipcMain.on('conn:resize', (_e, connId: string, cols: number, rows: number) => conns.get(connId)?.resize(cols, rows));
+  handle('conn:close', (connId: string) => {
+    conns.get(connId)?.close();
+    conns.delete(connId);
+    send('tunnels:changed', allTunnelStatus());
+  });
+  ipcMain.on('prompt:reply', (_e, id: string, value: unknown) => {
+    pending.get(id)?.(value);
+    pending.delete(id);
+  });
+  handle('serial:list', () => listSerialPorts());
+
+  // --- Túneles -------------------------------------------------------------
+  handle('tunnels:list', () => allTunnelStatus());
+  handle('tunnels:start', (connId: string, tid: string) => sshConn(connId).tunnels!.start(tid));
+  handle('tunnels:stop', (connId: string, tid: string) => sshConn(connId).tunnels!.stop(tid));
+  handle('tunnels:add', async (connId: string, t: TunnelConfig) => {
+    const c = sshConn(connId);
+    const cfg = { ...t, id: t.id || randomUUID() };
+    c.tunnels!.add(cfg);
+    await c.tunnels!.start(cfg.id);
+  });
+
+  // --- SFTP ----------------------------------------------------------------
+  const sftp = (connId: string) => sshConn(connId).sftp();
+  handle('sftp:home', async (connId: string) => sftpOps.realpath(await sftp(connId), '.'));
+  handle('sftp:list', async (connId: string, path: string) => sftpOps.list(await sftp(connId), path));
+  handle('sftp:mkdir', async (connId: string, path: string) => sftpOps.mkdir(await sftp(connId), path));
+  handle('sftp:rename', async (connId: string, a: string, b: string) => sftpOps.rename(await sftp(connId), a, b));
+  handle('sftp:chmod', async (connId: string, path: string, mode: number) => sftpOps.chmod(await sftp(connId), path, mode));
+  handle('sftp:delete', async (connId: string, path: string, isDir: boolean) => sftpOps.remove(await sftp(connId), path, isDir));
+  handle('sftp:readText', async (connId: string, path: string) => sftpOps.readText(await sftp(connId), path));
+  handle('sftp:writeText', async (connId: string, path: string, content: string) => sftpOps.writeText(await sftp(connId), path, content));
+  const progress = (connId: string) => (file: string, transferred: number, total: number) =>
+    send('sftp:progress', connId, { file, transferred, total });
+  handle('sftp:download', async (connId: string, remotePaths: string[]) => {
+    const r = await dialog.showOpenDialog(win!, { title: 'Descargar en…', properties: ['openDirectory', 'createDirectory'] });
+    if (r.canceled || !r.filePaths[0]) return false;
+    const s = await sftp(connId);
+    for (const rp of remotePaths) await sftpOps.download(s, rp, r.filePaths[0], progress(connId));
+    return r.filePaths[0];
+  });
+  handle('sftp:upload', async (connId: string, remoteDir: string, localPaths?: string[]) => {
+    let paths = localPaths;
+    if (!paths || paths.length === 0) {
+      const r = await dialog.showOpenDialog(win!, { title: 'Subir archivos', properties: ['openFile', 'multiSelections'] });
+      if (r.canceled) return false;
+      paths = r.filePaths;
+    }
+    const s = await sftp(connId);
+    for (const lp of paths) await sftpOps.upload(s, lp, remoteDir, progress(connId));
+    return true;
+  });
+
+  // --- Monitor remoto ------------------------------------------------------
+  handle('monitor:stats', async (connId: string) => {
+    const out = await sshConn(connId).exec(
+      "cat /proc/loadavg 2>/dev/null; echo '--'; free -m 2>/dev/null | awk 'NR==2{print $2\" \"$3}'; echo '--'; df -P / 2>/dev/null | awk 'NR==2{print $5}'; echo '--'; cat /proc/uptime 2>/dev/null; echo '--'; nproc 2>/dev/null",
+    );
+    const [load, mem, disk, up, cpus] = out.split('--').map((s) => s.trim());
+    const [memTotal, memUsed] = (mem || '').split(' ').map(Number);
+    return {
+      load: load ? Number(load.split(' ')[0]) : null,
+      cpus: Number(cpus) || null,
+      memTotal: memTotal || null,
+      memUsed: memUsed || null,
+      disk: disk || null,
+      uptimeSec: up ? Math.floor(Number(up.split(' ')[0])) : null,
+    };
+  });
+
+  // --- Utilidades ----------------------------------------------------------
+  handle('dialog:pickFile', async (title: string) => {
+    const r = await dialog.showOpenDialog(win!, { title, defaultPath: join(homedir(), '.ssh'), properties: ['openFile', 'showHiddenFiles'] });
+    return r.canceled ? null : r.filePaths[0];
+  });
+  handle('shell:openExternal', (url: string) => {
+    if (/^https?:\/\//.test(url)) return shell.openExternal(url);
+  });
+}
+
+// Bloqueo automático de la bóveda por inactividad.
+setInterval(async () => {
+  if (!vault?.isUnlocked()) return;
+  const s = await store.getSettings();
+  if (s.vaultAutoLockMin > 0 && Date.now() - lastActivity > s.vaultAutoLockMin * 60_000) {
+    vault.lock();
+    send('vault:locked');
+  }
+}, 60_000).unref();
+
+app.whenReady().then(async () => {
+  store = new Store(dataDir());
+  await store.init();
+  vault = new Vault(join(store.dir, 'vault.json'));
+  registerIpc();
+  createWindow();
+});
+
+app.on('window-all-closed', () => app.quit());
