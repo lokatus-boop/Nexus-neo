@@ -133,6 +133,8 @@ export interface Settings {
   backupSchedule: BackupSchedule;
   /** Carpeta de los respaldos de configuración (por defecto, dentro de los datos de la app). */
   backupDir?: string;
+  /** Plugins activados y los permisos que se les han concedido. */
+  plugins: Record<string, { permissions: PluginPermission[] }>;
 }
 
 export interface SecretEntry {
@@ -387,4 +389,44 @@ export interface BackupSchedule {
   /** Ids de sesiones SSH/Telnet guardadas con su perfil de fabricante. */
   devices: { sessionId: string; vendor: string }[];
   lastRun?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Temas y plugins
+
+/** Tema de la interfaz y del terminal (los integrados, los propios y los de plugins). */
+export interface ThemeDef {
+  id: string;
+  name: string;
+  dark: boolean;
+  /** Colores de la interfaz: bg, panel, panel2, border, text, muted, accent, accent2, danger, warn. */
+  ui: Record<string, string>;
+  /** Colores del terminal (formato xterm.js: background, foreground, cursor, black…brightWhite). */
+  term: Record<string, string>;
+  updatedAt?: number;
+}
+
+/** Permisos que un plugin puede pedir (además de comandos, avisos, temas y almacenamiento propio). */
+export type PluginPermission = 'terminal:read' | 'terminal:write' | 'sessions:read';
+
+export interface PluginManifest {
+  id: string;
+  name: string;
+  version: string;
+  description?: string;
+  author?: string;
+  /** Archivo JavaScript principal (por defecto main.js). */
+  main?: string;
+  permissions?: PluginPermission[];
+}
+
+export interface PluginInfo {
+  id: string;
+  dir: string;
+  manifest?: PluginManifest;
+  /** Error al leer el manifiesto. */
+  error?: string;
+  enabled: boolean;
+  /** Activado, pero pide permisos que el usuario aún no ha aceptado (p. ej. tras actualizarlo). */
+  needsApproval: boolean;
 }

@@ -1,7 +1,7 @@
 // Prueba de humo de la interfaz: arranca la app real de Electron con Playwright
 // y recorre los flujos principales contra un servidor SSH de pruebas.
 import { _electron as electron, Page } from 'playwright';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
@@ -34,6 +34,21 @@ async function main() {
   const dataDir = mkdtempSync(join(tmpdir(), 'nexus-ui-data-'));
   const fakeHome = mkdtempSync(join(tmpdir(), 'nexus-ui-home-'));
 
+  // Plugin de ejemplo ya copiado en la carpeta de plugins (sin activar).
+  cpSync(join(process.cwd(), 'examples/plugins/marcas-de-tiempo'), join(dataDir, 'plugins', 'marcas-de-tiempo'), { recursive: true });
+  // Plugin «sonda» ya activado: comprueba que el worker no tiene red, Node ni DOM.
+  mkdirSync(join(dataDir, 'plugins', 'sonda'), { recursive: true });
+  writeFileSync(join(dataDir, 'plugins', 'sonda', 'manifest.json'), JSON.stringify({ id: 'sonda', name: 'Sonda', version: '1.0.0' }));
+  writeFileSync(join(dataDir, 'plugins', 'sonda', 'main.js'), `
+    const t = (f) => { try { return f(); } catch { return 'bloqueado'; } };
+    const r = { fetch: typeof fetch, xhr: typeof XMLHttpRequest, ws: typeof WebSocket, imp: typeof importScripts, req: typeof require, proc: typeof process, doc: typeof document,
+      proto: typeof Object.getPrototypeOf(self).fetch, fn: t(() => typeof new Function('return fetch')()) };
+    const vis = Object.keys(r).filter((k) => r[k] !== 'undefined' && r[k] !== 'bloqueado');
+    nexus.ui.setStatus('sonda:' + (vis.length ? vis.join(',') : 'aislado'));
+    nexus.terminal.send('no-debe-llegar').catch((e) => nexus.storage.set('error', e.message));
+  `);
+  writeFileSync(join(dataDir, 'settings.json'), JSON.stringify({ plugins: { sonda: { permissions: [] } } }));
+
   const { createRequire } = await import('node:module');
   const executablePath = createRequire(join(process.cwd(), 'package.json'))('electron') as unknown as string;
   const app = await electron.launch({
@@ -58,6 +73,11 @@ async function main() {
   console.log('✔ aviso legal en el primer arranque');
 
   await page.waitForSelector('#welcome .card-btn');
+  await page.waitForSelector('#status-plugins:has-text("sonda:")');
+  assert.equal(await page.locator('#status-plugins').innerText(), 'sonda:aislado');
+  for (let i = 0; i < 50 && !existsSync(join(dataDir, 'plugin-data', 'sonda.json')); i++) await page.waitForTimeout(100);
+  assert.match(JSON.parse(readFileSync(join(dataDir, 'plugin-data', 'sonda.json'), 'utf8')).error, /permiso «terminal:write»/);
+  console.log('✔ plugins aislados (sin red, Node ni DOM; permisos comprobados)');
   await page.screenshot({ path: join(shots, '01-bienvenida.png') });
   console.log('✔ pantalla de bienvenida');
 
@@ -377,6 +397,51 @@ async function main() {
     await rdpWin.close();
     console.log('✔ visor RDP integrado');
   } else console.log('… visor RDP: sin servidor de pruebas (define NEXUS_RDP_TEST=host:puerto)');
+
+  // Plugins: activar el de ejemplo, usar su comando y su reacción a la salida
+  await page.click('#btn-settings');
+  await page.click('#btn-plugins');
+  await page.click('.pl-row[data-plugin="marcas-de-tiempo"] .btn:has-text("Activar")');
+  await page.locator('.modal').last().locator('.btn.primary:has-text("Activar")').click();
+  await page.waitForSelector('.pl-row.on[data-plugin="marcas-de-tiempo"]');
+  await page.evaluate(() => document.getElementById('toasts')?.remove());
+  await page.screenshot({ path: join(shots, '17-plugins.png') });
+  await page.locator('.modal').last().locator('.btn:has-text("Cerrar")').click();
+  await page.locator('.modal').last().locator('.btn:has-text("Cancelar")').click();
+  await page.waitForSelector('.modal', { state: 'detached' });
+  assert.ok(JSON.parse(readFileSync(join(dataDir, 'settings.json'), 'utf8')).plugins['marcas-de-tiempo'].permissions.includes('terminal:write'));
+  await page.locator('.pane:not(.hidden) .xterm').click();
+  await page.keyboard.press('Control+Shift+K');
+  await page.keyboard.type('Insertar fecha');
+  await page.waitForSelector('.palette-list :text("Insertar fecha y hora")');
+  await page.keyboard.press('Enter');
+  // El comando escribe la fecha en el terminal activo (sin pulsar Intro).
+  await waitTerm(page, `~# ${new Date().getFullYear()}-`);
+  await page.locator('.pane:not(.hidden) .xterm').click();
+  await page.keyboard.press('Control+C');
+  await page.keyboard.type('% Invalid input');
+  await page.waitForSelector('#status-plugins:has-text("1 error")');
+  await page.keyboard.press('Control+C');
+  console.log('✔ plugins');
+
+  // Temas: importar un esquema de Windows Terminal y usarlo
+  await page.click('#btn-settings');
+  await page.click('#btn-themes');
+  await page.waitForSelector('.te-item[data-theme="plugin-marcas-de-tiempo-ambar-retro"]');
+  await page.click('#te-import');
+  await page.locator('.modal').last().locator('textarea').fill(JSON.stringify({ name: 'Campbell Plus', background: '#0C0C0C', foreground: '#CCCCCC', black: '#0C0C0C', red: '#C50F1F', green: '#13A10E', yellow: '#C19C00', blue: '#0037DA', purple: '#881798', cyan: '#3A96DD', white: '#CCCCCC', brightBlack: '#767676', brightRed: '#E74856', brightGreen: '#16C60C', brightYellow: '#F9F1A5', brightBlue: '#3B78FF', brightPurple: '#B4009E', brightCyan: '#61D6D6', brightWhite: '#F2F2F2' }));
+  await page.locator('.modal').last().locator('.btn.primary:has-text("Importar")').click();
+  await page.waitForSelector('.te-item.active:has-text("Campbell Plus")');
+  await page.evaluate(() => document.getElementById('toasts')?.remove());
+  await page.screenshot({ path: join(shots, '18-temas.png') });
+  await page.locator('.modal').last().locator('.btn.primary:has-text("Usar este tema")').click();
+  await page.waitForFunction(() => document.querySelectorAll('.modal').length === 1);
+  assert.equal(await page.locator('.modal .field:has-text("Tema") select').inputValue(), 'custom-campbell-plus');
+  await page.click('.modal .btn.primary:has-text("Guardar")');
+  await page.waitForSelector('.modal', { state: 'detached' });
+  assert.equal(JSON.parse(readFileSync(join(dataDir, 'settings.json'), 'utf8')).theme, 'custom-campbell-plus');
+  assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--text').trim()), '#cccccc');
+  console.log('✔ temas personalizados');
 
   // Tema claro
   await page.click('#btn-settings');

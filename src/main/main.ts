@@ -11,6 +11,8 @@ import { VncBridge } from './vnc-bridge';
 import { RdpGateway } from './rdp/gateway';
 import { SyncManager } from './sync-manager';
 import { NetOps, SCHEDULE_SECRET, sessionDevice } from './netops/service';
+import { PluginManager } from './plugins';
+import { normalizeTheme, exportTheme, slug } from '../shared/theme-format';
 import { LocalConnection, detectShells } from './protocols/local';
 import { TelnetConnection } from './protocols/telnet';
 import { MoshConnection } from './protocols/mosh';
@@ -22,7 +24,7 @@ import { generateKey, installPublicKey, listKeys, sshDir, KeyType } from './keys
 import { checkKeyPermissions, importKeyFile, protectKeyFile } from './key-perms';
 import { ServerManager, defaultServers, listInterfaces } from './servers/manager';
 import { buildNexusExport, parseNexusExport, parseSshConfig } from './importers';
-import type { AuthPrompt, BackupJob, ConfigTemplate, DeployJob, HostKeyPrompt, Macro, OpenRequest, SecretEntry, ServerConfig, SessionConfig, Settings, TunnelConfig } from '../shared/types';
+import type { AuthPrompt, BackupJob, ConfigTemplate, PluginPermission, ThemeDef, DeployJob, HostKeyPrompt, Macro, OpenRequest, SecretEntry, ServerConfig, SessionConfig, Settings, TunnelConfig } from '../shared/types';
 
 // ---------------------------------------------------------------------------
 // Directorio de datos: modo portable si existe un archivo "portable" junto al ejecutable.
@@ -37,6 +39,7 @@ let store: Store;
 let vault: Vault;
 let sync: SyncManager;
 let netops: NetOps;
+let plugins: PluginManager;
 let win: BrowserWindow | null = null;
 const conns = new Map<string, TerminalConnection>();
 const pending = new Map<string, (v: unknown) => void>();
@@ -503,6 +506,52 @@ function registerIpc(): void {
   });
   handle('backups:runScheduled', () => netops.tick(true));
 
+  // --- Temas personalizados ----------------------------------------------
+  handle('themes:list', () => store.listThemes());
+  handle('themes:save', (t: ThemeDef) => store.saveTheme(normalizeTheme(t)));
+  handle('themes:delete', (id: string) => store.deleteTheme(id));
+  handle('themes:pickFile', async () => {
+    const r = await dialog.showOpenDialog(win!, { title: 'Importar tema', filters: [{ name: 'Temas (Nexus Neo, Windows Terminal, iTerm2)', extensions: ['json', 'itermcolors'] }, { name: 'Todos', extensions: ['*'] }], properties: ['openFile'] });
+    if (r.canceled || !r.filePaths[0]) return null;
+    const st = await fs.stat(r.filePaths[0]);
+    if (st.size > 2 * 1024 * 1024) throw new Error('El archivo es demasiado grande para ser un tema.');
+    return { name: r.filePaths[0], text: await fs.readFile(r.filePaths[0], 'utf8') };
+  });
+  handle('themes:export', async (t: ThemeDef) => {
+    const r = await dialog.showSaveDialog(win!, { title: 'Exportar tema', defaultPath: join(homedir(), `${slug(t.name)}.nexus-theme.json`), filters: [{ name: 'Tema de Nexus Neo', extensions: ['json'] }] });
+    if (r.canceled || !r.filePath) return null;
+    await fs.writeFile(r.filePath, exportTheme(normalizeTheme(t)));
+    return r.filePath;
+  });
+
+  // --- Plugins -------------------------------------------------------------
+  handle('plugins:list', async () => plugins.list(await store.getSettings()));
+  handle('plugins:code', async (id: string) => plugins.code(id, await store.getSettings()));
+  handle('plugins:enable', async (id: string, permissions: PluginPermission[]) => {
+    const s = await store.getSettings();
+    await store.saveSettings({ plugins: { ...s.plugins, [id]: { permissions } } });
+  });
+  handle('plugins:disable', async (id: string) => {
+    const { [id]: _off, ...rest } = (await store.getSettings()).plugins;
+    await store.saveSettings({ plugins: rest });
+  });
+  handle('plugins:install', async () => {
+    const r = await dialog.showOpenDialog(win!, { title: 'Carpeta del plugin (con manifest.json)', properties: ['openDirectory'] });
+    if (r.canceled || !r.filePaths[0]) return null;
+    return plugins.install(r.filePaths[0]);
+  });
+  handle('plugins:remove', async (id: string) => {
+    const { [id]: _off, ...rest } = (await store.getSettings()).plugins;
+    await store.saveSettings({ plugins: rest });
+    await plugins.remove(id);
+  });
+  handle('plugins:openDir', async () => {
+    await fs.mkdir(plugins.dir, { recursive: true });
+    return shell.openPath(plugins.dir);
+  });
+  handle('plugins:storageGet', (id: string, key: string) => plugins.storageGet(id, key));
+  handle('plugins:storageSet', (id: string, key: string, value: unknown) => plugins.storageSet(id, key, value));
+
   // --- Sincronización ----------------------------------------------------
   handle('sync:status', () => sync.getStatus());
   handle('sync:configure', async (cfg: Settings['sync'], passphrase?: string | null) => {
@@ -665,6 +714,7 @@ app.whenReady().then(async () => {
       { name: 'sessions', list: () => store.listSessions(), replace: (l) => store.replaceSessions(l as SessionConfig[]) },
       { name: 'macros', list: () => store.listMacros(), replace: (l) => store.replaceMacros(l as Macro[]) },
       { name: 'templates', list: () => store.listTemplates(), replace: (l) => store.replaceTemplates(l as ConfigTemplate[]) },
+      { name: 'themes', list: () => store.listThemes(), replace: (l) => store.replaceThemes(l as ThemeDef[]) },
     ],
     openSftp: async (sessionId) => {
       const sessions = await store.listSessions();
@@ -678,6 +728,7 @@ app.whenReady().then(async () => {
   store.onChange = () => sync.localChanged();
   sync.on('applied', (stats: { added: number; updated: number; removed: number }) => send('sync:applied', stats));
   sync.on('status', (st) => send('sync:status', st));
+  plugins = new PluginManager(join(store.dir, 'plugins'), join(store.dir, 'plugin-data'));
   netops = new NetOps({
     store,
     vault,

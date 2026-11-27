@@ -2,7 +2,7 @@
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { ConfigTemplate, Macro, ServerConfig, SessionConfig, Settings } from '../shared/types';
+import type { ConfigTemplate, ThemeDef, Macro, ServerConfig, SessionConfig, Settings } from '../shared/types';
 
 export const DEFAULT_SETTINGS: Settings = {
   theme: 'nexus-dark',
@@ -25,6 +25,7 @@ export const DEFAULT_SETTINGS: Settings = {
   disclaimerAccepted: 0,
   sync: { enabled: false, mode: 'folder', path: '', includeSecrets: false, intervalMin: 15, deviceName: '' },
   backupSchedule: { enabled: false, everyHours: 24, devices: [] },
+  plugins: {},
 };
 
 class JsonFile<T> {
@@ -58,6 +59,7 @@ export class Store {
   private sessions: JsonFile<SessionConfig[]>;
   private macros: JsonFile<Macro[]>;
   private templates: JsonFile<ConfigTemplate[]>;
+  private themes: JsonFile<ThemeDef[]>;
   private settings: JsonFile<Partial<Settings>>;
   private known: JsonFile<Record<string, string>>;
   private servers: JsonFile<ServerConfig[] | null>;
@@ -70,6 +72,7 @@ export class Store {
     this.sessions = new JsonFile(join(dir, 'sessions.json'), () => []);
     this.macros = new JsonFile(join(dir, 'macros.json'), () => []);
     this.templates = new JsonFile(join(dir, 'templates.json'), () => []);
+    this.themes = new JsonFile(join(dir, 'themes.json'), () => []);
     this.settings = new JsonFile(join(dir, 'settings.json'), () => ({}));
     this.known = new JsonFile(join(dir, 'known_hosts.json'), () => ({}));
     this.servers = new JsonFile(join(dir, 'servers.json'), () => null);
@@ -125,6 +128,31 @@ export class Store {
   async deleteTemplate(id: string): Promise<void> {
     await this.templates.write((await this.templates.read()).filter((t) => t.id !== id));
     await this.markDeleted('templates', id);
+    this.changed();
+  }
+
+  listThemes(): Promise<ThemeDef[]> {
+    return this.themes.read();
+  }
+
+  async replaceThemes(list: ThemeDef[]): Promise<void> {
+    await this.themes.write(list);
+  }
+
+  async saveTheme(t: ThemeDef): Promise<ThemeDef> {
+    const list = [...(await this.themes.read())];
+    const clean = { ...t, updatedAt: Date.now() };
+    const i = list.findIndex((x) => x.id === clean.id);
+    if (i >= 0) list[i] = clean;
+    else list.push(clean);
+    await this.themes.write(list);
+    this.changed();
+    return clean;
+  }
+
+  async deleteTheme(id: string): Promise<void> {
+    await this.themes.write((await this.themes.read()).filter((t) => t.id !== id));
+    await this.markDeleted('themes', id);
     this.changed();
   }
 

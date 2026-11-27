@@ -6,7 +6,10 @@ import { Tab, TabHost, kindIcon } from './tab';
 import { editSession } from './session-editor';
 import { parseQuickConnect } from './quick-connect';
 import { parseMacro, runMacro, encodeRecording } from './macro-engine';
-import { THEMES, themeById, applyUiTheme } from './themes';
+import { allThemes, themeById, applyUiTheme, addPluginTheme } from './themes';
+import { themeEditor, refreshCustomThemes } from './theme-editor';
+import { PluginHost } from './plugin-host';
+import { pluginsDialog, startPlugins } from './plugins-dialog';
 import { ServersPanel } from './servers-panel';
 import { aboutDialog, ensureDisclaimerAccepted, logo } from './about';
 import { AUTHOR } from '../shared/legal';
@@ -579,7 +582,7 @@ async function addTempTunnel(): Promise<void> {
 
 async function settingsDialog(): Promise<void> {
   const s = state.settings!;
-  const theme = select(THEMES.map((t) => [t.id, t.name] as [string, string]), s.theme);
+  const theme = select(allThemes().map((t) => [t.id, t.name] as [string, string]), s.theme);
   const fontFamily = input({ value: s.fontFamily });
   const fontSize = input({ type: 'number', value: String(s.fontSize), min: '8', max: '32' });
   const cursorStyle = select([['block', 'Bloque'], ['bar', 'Barra'], ['underline', 'Subrayado']], s.cursorStyle);
@@ -601,7 +604,15 @@ async function settingsDialog(): Promise<void> {
   const body = el('div', { class: 'session-form' },
     el('fieldset', {}, el('legend', {}, 'Apariencia'),
       el('div', { class: 'grid3' }, field('Tema', theme), field('Tamaño de letra', fontSize), field('Cursor', cursorStyle)),
-      field('Tipografía', fontFamily), blink.wrap),
+      field('Tipografía', fontFamily), blink.wrap,
+      el('div', { class: 'row' },
+        el('button', { class: 'btn ghost', type: 'button', id: 'btn-themes', onclick: async () => {
+          const id = await themeEditor(theme.value);
+          theme.replaceChildren(...allThemes().map((t) => el('option', { value: t.id }, t.name)));
+          theme.value = id || s.theme;
+          applyUiTheme(themeById(theme.value));
+        } }, 'Personalizar temas…'),
+        el('button', { class: 'btn ghost', type: 'button', id: 'btn-plugins', onclick: () => void pluginsDialog(pluginHost) }, 'Plugins…'))),
     el('fieldset', {}, el('legend', {}, 'Terminal'),
       el('div', { class: 'grid2' }, field('Líneas de historial', scrollback), field('Shell local por defecto', shell)),
       cos.wrap, rcp.wrap, coc.wrap, autoRe.wrap),
@@ -686,6 +697,14 @@ async function palette(): Promise<void> {
     { label: 'Claves SSH (generar / instalar)…', sub: 'Acción', run: () => void openKeys() },
     { label: 'Servidores TFTP / FTP / HTTP / Syslog', sub: 'Acción', run: () => void serversPanel.toggle(true) },
     { label: 'Ajustes…', sub: 'Acción', run: () => void settingsDialog() },
+    { label: 'Temas: crear, editar e importar…', sub: 'Apariencia', run: () => void openThemes() },
+    ...allThemes().map((t) => ({ label: `Tema: ${t.name}`, sub: 'Apariencia', run: async () => {
+      state.settings = await api.settings.save({ theme: t.id });
+      applyUiTheme(t);
+      for (const x of state.tabs) x.applySettings(state.settings!);
+    } })),
+    { label: 'Plugins…', sub: 'Acción', run: () => void pluginsDialog(pluginHost) },
+    ...pluginHost.commands().map((c) => ({ label: c.label, sub: `Plugin: ${c.pluginName}`, run: c.run })),
     { label: 'Sincronizar sesiones entre equipos…', sub: 'Acción', run: () => void openSync() },
     { label: 'Despliegue masivo a switches y routers…', sub: 'Red', run: () => void openNetops('deploy') },
     { label: 'Plantillas de configuración…', sub: 'Red', run: () => void openNetops('templates') },
@@ -878,7 +897,7 @@ function buildLayout(): void {
         ),
         serversPanel.root,
       ),
-      el('footer', { id: 'statusbar' }, el('span', { id: 'status-left' }), el('span', { class: 'spacer' }), el('span', { id: 'status-right' })),
+      el('footer', { id: 'statusbar' }, el('span', { id: 'status-left' }), el('span', { class: 'spacer' }), el('span', { id: 'status-plugins' }), el('span', { id: 'status-right' })),
     ),
   );
 }
@@ -915,6 +934,41 @@ function bindShortcuts(): void {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Plugins
+
+const pluginStatus = new Map<string, string>();
+const pluginHost = new PluginHost({
+  activeTab: () => (state.active ? { connId: state.active.connId, title: state.active.title } : null),
+  write: (connId, data) => api.conn.write(connId, data),
+  notify: (msg, kind) => toast(msg, kind),
+  prompt: (title, label) => promptDialog(title, label),
+  registerTheme: (t) => {
+    addPluginTheme(t);
+    if (state.settings?.theme === t.id) applyUiTheme(themeById(t.id));
+  },
+  listSessions: () => state.sessions.map((x) => ({ name: x.name, kind: x.kind, host: x.host, folder: x.folder })),
+  setStatus: (id, text) => {
+    if (text) pluginStatus.set(id, text);
+    else pluginStatus.delete(id);
+    const elx = document.getElementById('status-plugins');
+    if (elx) elx.textContent = [...pluginStatus.values()].join(' · ');
+  },
+  storageGet: (id, key) => api.plugins.storageGet(id, key),
+  storageSet: (id, key, value) => api.plugins.storageSet(id, key, value),
+  commandsChanged: () => undefined,
+  log: (id, msg) => console.warn(`[plugin ${id}] ${msg}`),
+});
+
+async function openThemes(): Promise<void> {
+  const id = await themeEditor(state.settings!.theme);
+  if (id) {
+    state.settings = await api.settings.save({ theme: id });
+    for (const t of state.tabs) t.applySettings(state.settings!);
+  }
+  applyUiTheme(themeById(state.settings!.theme));
+}
+
 async function main(): Promise<void> {
   buildLayout();
   bindShortcuts();
@@ -925,12 +979,22 @@ async function main(): Promise<void> {
   state.macros = macros;
   document.body.classList.add(`platform-${info.platform}`);
   $('#status-right').textContent = `Nexus Neo ${info.version}`;
+  await refreshCustomThemes();
   applyUiTheme(themeById(settings.theme));
   renderSidebar();
   renderWelcome();
   if (!(await ensureDisclaimerAccepted(settings))) return;
 
-  api.conn.onData((id: string, data: string) => state.tabs.find((t) => t.connId === id)?.receive(data));
+  api.conn.onData((id: string, data: string) => {
+    const tab = state.tabs.find((t) => t.connId === id);
+    tab?.receive(data);
+    if (tab) pluginHost.output(id, tab.title, data);
+  });
+  void startPlugins(pluginHost).then(() => {
+    // Un tema aportado por un plugin puede ser el elegido.
+    applyUiTheme(themeById(state.settings!.theme));
+    for (const t of state.tabs) t.applySettings(state.settings!);
+  });
   api.conn.onState((id: string, s: Tab['state'], msg?: string) => state.tabs.find((t) => t.connId === id)?.setState(s, msg));
   api.tunnels.onChanged((l: typeof state.tunnels) => {
     state.tunnels = l;
@@ -938,6 +1002,7 @@ async function main(): Promise<void> {
   });
   api.sync.onApplied(async (st: { added: number; updated: number; removed: number }) => {
     state.macros = await api.macros.list();
+    await refreshCustomThemes();
     await reloadSessions();
     const n = st.added + st.updated + st.removed;
     if (n) toast(`Sincronización: ${st.added} nuevas, ${st.updated} actualizadas, ${st.removed} eliminadas`, 'ok');

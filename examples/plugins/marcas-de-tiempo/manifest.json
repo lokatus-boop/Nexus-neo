@@ -1,0 +1,9 @@
+{
+  "id": "marcas-de-tiempo",
+  "name": "Marcas de tiempo y errores",
+  "version": "1.0.0",
+  "description": "Inserta la fecha y hora en el terminal, cuenta los errores «% Invalid input» que devuelven los equipos y añade el tema «Ámbar retro».",
+  "author": "Ejemplo de Nexus Neo",
+  "main": "main.js",
+  "permissions": ["terminal:read", "terminal:write"]
+}

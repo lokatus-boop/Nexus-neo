@@ -99,6 +99,18 @@ const api = {
     onProgress: (fn: (p: any) => void) => on('netops:progress', fn),
   },
   templates: { list: invoke('templates:list'), save: invoke('templates:save'), delete: invoke('templates:delete'), export: invoke('templates:export') },
+  themes: { list: invoke('themes:list'), save: invoke('themes:save'), delete: invoke('themes:delete'), pickFile: invoke('themes:pickFile'), export: invoke('themes:export') },
+  plugins: {
+    list: invoke('plugins:list'),
+    code: invoke('plugins:code'),
+    enable: invoke('plugins:enable'),
+    disable: invoke('plugins:disable'),
+    install: invoke('plugins:install'),
+    remove: invoke('plugins:remove'),
+    openDir: invoke('plugins:openDir'),
+    storageGet: invoke('plugins:storageGet'),
+    storageSet: invoke('plugins:storageSet'),
+  },
   onToast: (fn: (msg: string, kind: any) => void) => on('app:toast', fn),
   sync: {
     status: invoke('sync:status'),
