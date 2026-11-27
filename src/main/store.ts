@@ -23,6 +23,7 @@ export const DEFAULT_SETTINGS: Settings = {
   logStripAnsi: true,
   autoReconnect: true,
   disclaimerAccepted: 0,
+  sync: { enabled: false, mode: 'folder', path: '', includeSecrets: false, intervalMin: 15, deviceName: '' },
 };
 
 class JsonFile<T> {
@@ -59,6 +60,9 @@ export class Store {
   private known: JsonFile<Record<string, string>>;
   private servers: JsonFile<ServerConfig[] | null>;
   private knownCache: Record<string, string> = {};
+  private deleted: JsonFile<Record<string, number>>;
+  /** Se llama tras cualquier cambio en datos sincronizables (sesiones, macros, plantillas…). */
+  onChange: (() => void) | null = null;
 
   constructor(readonly dir: string) {
     this.sessions = new JsonFile(join(dir, 'sessions.json'), () => []);
@@ -66,6 +70,34 @@ export class Store {
     this.settings = new JsonFile(join(dir, 'settings.json'), () => ({}));
     this.known = new JsonFile(join(dir, 'known_hosts.json'), () => ({}));
     this.servers = new JsonFile(join(dir, 'servers.json'), () => null);
+    this.deleted = new JsonFile(join(dir, 'deleted.json'), () => ({}));
+  }
+
+  private changed(): void {
+    this.onChange?.();
+  }
+
+  /** Marcas de borrado para la sincronización: "colección:id" → fecha. */
+  async tombstones(): Promise<Record<string, number>> {
+    return { ...(await this.deleted.read()) };
+  }
+
+  async setTombstones(t: Record<string, number>): Promise<void> {
+    await this.deleted.write(t);
+  }
+
+  private async markDeleted(collection: string, id: string): Promise<void> {
+    const t = await this.deleted.read();
+    await this.deleted.write({ ...t, [`${collection}:${id}`]: Date.now() });
+  }
+
+  /** Sustituye la lista completa (lo usa la sincronización tras fusionar). */
+  async replaceSessions(list: SessionConfig[]): Promise<void> {
+    await this.sessions.write(list);
+  }
+
+  async replaceMacros(list: Macro[]): Promise<void> {
+    await this.macros.write(list);
   }
 
   async init(): Promise<void> {
@@ -83,22 +115,27 @@ export class Store {
 
   async saveSession(s: SessionConfig): Promise<SessionConfig> {
     const list = [...(await this.sessions.read())];
-    const clean: SessionConfig = { ...s, id: s.id || randomUUID(), name: s.name?.trim() || s.host || 'Sesión' };
+    const clean: SessionConfig = { ...s, id: s.id || randomUUID(), name: s.name?.trim() || s.host || 'Sesión', updatedAt: Date.now() };
     const i = list.findIndex((x) => x.id === clean.id);
     if (i >= 0) list[i] = clean;
     else list.push(clean);
     await this.sessions.write(list);
+    this.changed();
     return clean;
   }
 
   async addSessions(items: SessionConfig[]): Promise<void> {
-    const list = [...(await this.sessions.read()), ...items];
+    const now = Date.now();
+    const list = [...(await this.sessions.read()), ...items.map((s) => ({ ...s, updatedAt: now }))];
     await this.sessions.write(list);
+    this.changed();
   }
 
   async deleteSession(id: string): Promise<void> {
     const list = (await this.sessions.read()).filter((s) => s.id !== id);
     await this.sessions.write(list);
+    await this.markDeleted('sessions', id);
+    this.changed();
   }
 
   listMacros(): Promise<Macro[]> {
@@ -107,16 +144,19 @@ export class Store {
 
   async saveMacro(m: Macro): Promise<Macro> {
     const list = [...(await this.macros.read())];
-    const clean = { ...m, id: m.id || randomUUID() };
+    const clean = { ...m, id: m.id || randomUUID(), updatedAt: Date.now() };
     const i = list.findIndex((x) => x.id === clean.id);
     if (i >= 0) list[i] = clean;
     else list.push(clean);
     await this.macros.write(list);
+    this.changed();
     return clean;
   }
 
   async deleteMacro(id: string): Promise<void> {
     await this.macros.write((await this.macros.read()).filter((m) => m.id !== id));
+    await this.markDeleted('macros', id);
+    this.changed();
   }
 
   async getSettings(): Promise<Settings> {

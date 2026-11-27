@@ -140,6 +140,24 @@ async function main() {
   await waitTerm(page, 'eco:saludo-macro');
   console.log('✔ macros');
 
+  // Sincronización cifrada a una carpeta
+  const syncDir = mkdtempSync(join(tmpdir(), 'nexus-ui-sync-'));
+  await page.click('#btn-sync');
+  const sm = page.locator('.modal').last();
+  await sm.locator('label.check:has-text("Activar") input').check();
+  await sm.locator('.field:has-text("Carpeta") input').fill(syncDir);
+  await sm.locator('.field:has-text("Frase de sincronización") input').fill('frase-de-prueba');
+  await sm.locator('.field:has-text("Repítela") input').fill('frase-de-prueba');
+  await sm.locator('.btn:has-text("Sincronizar ahora")').click();
+  await page.waitForSelector('#sync-status:has-text("Sincronizado")');
+  await page.evaluate(() => document.getElementById('toasts')?.remove());
+  await page.screenshot({ path: join(shots, '13-sincronizacion.png') });
+  await sm.locator('.btn.primary:has-text("Guardar")').click();
+  await page.waitForSelector('#btn-sync.active');
+  assert.ok(existsSync(join(syncDir, 'nexus-neo-sync.json')));
+  assert.ok(!readFileSync(join(syncDir, 'nexus-neo-sync.json'), 'utf8').includes('Servidor de pruebas'), 'el archivo de sincronización debe ir cifrado');
+  console.log('✔ sincronización cifrada');
+
   // Paleta
   await page.locator('.pane:not(.hidden) .xterm').click();
   await page.keyboard.press('Control+Shift+K');
@@ -239,8 +257,8 @@ async function main() {
     await page.evaluate(() => document.getElementById('toasts')?.remove());
     await page.screenshot({ path: join(shots, '12-mosh.png') });
     await page.keyboard.press('Control+Shift+W');
-    const closeBtn = page.locator('.modal .btn.danger:has-text("Cerrar")');
-    if (await closeBtn.count()) await closeBtn.click();
+    await page.click('.modal .btn.danger:has-text("Cerrar")');
+    await page.waitForSelector('.tab:has-text("mosh://")', { state: 'detached' });
     console.log('✔ Mosh');
   } else console.log('… Mosh: mosh-server no está instalado');
 

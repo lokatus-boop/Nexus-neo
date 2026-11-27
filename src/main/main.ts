@@ -9,6 +9,7 @@ import { TerminalConnection, Prompter } from './protocols/base';
 import { SshConnection, SshDeps, connectClient } from './protocols/ssh';
 import { VncBridge } from './vnc-bridge';
 import { RdpGateway } from './rdp/gateway';
+import { SyncManager } from './sync-manager';
 import { LocalConnection, detectShells } from './protocols/local';
 import { TelnetConnection } from './protocols/telnet';
 import { MoshConnection } from './protocols/mosh';
@@ -33,6 +34,7 @@ function dataDir(): string {
 
 let store: Store;
 let vault: Vault;
+let sync: SyncManager;
 let win: BrowserWindow | null = null;
 const conns = new Map<string, TerminalConnection>();
 const pending = new Map<string, (v: unknown) => void>();
@@ -258,7 +260,10 @@ function registerIpc(): void {
   // --- Bóveda --------------------------------------------------------------
   handle('vault:status', async () => ({ exists: await vault.exists(), unlocked: vault.isUnlocked() }));
   handle('vault:create', (pw: string) => vault.create(pw));
-  handle('vault:unlock', (pw: string) => vault.unlock(pw));
+  handle('vault:unlock', async (pw: string) => {
+    await vault.unlock(pw);
+    void sync.run(true);
+  });
   handle('vault:lock', () => vault.lock());
   handle('vault:change', (oldPw: string, newPw: string) => vault.changePassword(oldPw, newPw));
 
@@ -458,6 +463,18 @@ function registerIpc(): void {
   });
   handle('logs:dir', async () => (await store.getSettings()).logDir || join(store.dir, 'logs'));
 
+  // --- Sincronización ----------------------------------------------------
+  handle('sync:status', () => sync.getStatus());
+  handle('sync:configure', async (cfg: Settings['sync'], passphrase?: string | null) => {
+    if (cfg.enabled && !cfg.path.trim()) throw new Error(cfg.mode === 'folder' ? 'Elige la carpeta de sincronización.' : 'Indica la ruta remota.');
+    if (cfg.enabled && cfg.mode === 'sftp' && !cfg.sessionId) throw new Error('Elige la sesión SSH del servidor.');
+    if (passphrase !== undefined) await sync.setPassphrase(passphrase);
+    await store.saveSettings({ sync: { ...cfg, path: cfg.path.trim(), intervalMin: Math.max(0, Number(cfg.intervalMin) || 0) } });
+    await sync.schedule();
+    return sync.getStatus();
+  });
+  handle('sync:run', () => sync.run(false));
+
   // --- RDP ---------------------------------------------------------------
   ipcMain.handle('rdp:prepare', async (_e, id: string) => {
     const entry = rdpWindows.get(id);
@@ -601,10 +618,32 @@ app.whenReady().then(async () => {
   store = new Store(dataDir());
   await store.init();
   vault = new Vault(join(store.dir, 'vault.json'));
+  sync = new SyncManager({
+    store,
+    vault,
+    collections: [
+      { name: 'sessions', list: () => store.listSessions(), replace: (l) => store.replaceSessions(l as SessionConfig[]) },
+      { name: 'macros', list: () => store.listMacros(), replace: (l) => store.replaceMacros(l as Macro[]) },
+    ],
+    openSftp: async (sessionId) => {
+      const sessions = await store.listSessions();
+      const cfg = sessions.find((x) => x.id === sessionId);
+      if (!cfg) throw new Error('La sesión SSH de sincronización no existe.');
+      const client = await connectClient(cfg, sshDeps('sync', sessions));
+      const sftp = await new Promise<import('ssh2').SFTPWrapper>((resolve, reject) => client.sftp((e, x) => (e ? reject(e) : resolve(x))));
+      return { sftp, close: () => client.end(), label: cfg.name };
+    },
+  });
+  store.onChange = () => sync.localChanged();
+  sync.on('applied', (stats: { added: number; updated: number; removed: number }) => send('sync:applied', stats));
+  sync.on('status', (st) => send('sync:status', st));
   registerIpc();
   createWindow();
+  await sync.schedule();
+  setTimeout(() => void sync.run(true), 4000).unref();
 });
 
 app.on('window-all-closed', () => {
+  sync?.stop();
   void Promise.all([servers.stopAll(), rdpGateway.stop()]).finally(() => app.quit());
 });

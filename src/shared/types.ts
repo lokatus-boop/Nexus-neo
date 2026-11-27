@@ -25,6 +25,8 @@ export interface SessionConfig {
   /** Carpeta en el árbol de sesiones, separada por "/". */
   folder: string;
   kind: SessionKind;
+  /** Última modificación (ms); la usa la sincronización para resolver conflictos. */
+  updatedAt?: number;
   color?: string;
   notes?: string;
 
@@ -98,6 +100,7 @@ export interface Macro {
    */
   body: string;
   shortcut?: string;
+  updatedAt?: number;
 }
 
 export interface Settings {
@@ -125,6 +128,8 @@ export interface Settings {
   autoReconnect: boolean;
   /** Versión del aviso legal aceptada por el usuario (0 = sin aceptar). */
   disclaimerAccepted: number;
+  /** Sincronización cifrada de sesiones entre equipos. */
+  sync: SyncSettings;
 }
 
 export interface SecretEntry {
@@ -235,4 +240,43 @@ export interface NetInterfaceInfo {
   name: string;
   address: string;
   family: 'IPv4' | 'IPv6';
+}
+
+// ---------------------------------------------------------------------------
+// Sincronización cifrada entre equipos
+
+export interface SyncSettings {
+  enabled: boolean;
+  /** Carpeta compartida (Dropbox, OneDrive, Syncthing, NAS…) o servidor SFTP. */
+  mode: 'folder' | 'sftp';
+  /** Carpeta local (modo folder) o ruta remota (modo sftp) del archivo de sincronización. */
+  path: string;
+  /** Sesión SSH guardada para el modo sftp. */
+  sessionId?: string;
+  /** Sincroniza también las contraseñas de la bóveda (siempre cifradas). */
+  includeSecrets: boolean;
+  /** Minutos entre sincronizaciones automáticas (0 = sólo manual y al cambiar algo). */
+  intervalMin: number;
+  /** Nombre de este equipo en el archivo de sincronización. */
+  deviceName: string;
+}
+
+export interface SyncStatus {
+  configured: boolean;
+  hasPassphrase: boolean;
+  running: boolean;
+  lastSync?: number;
+  lastError?: string;
+  lastResult?: SyncResult;
+}
+
+export interface SyncResult {
+  /** Cambios aplicados en este equipo. */
+  added: number;
+  updated: number;
+  removed: number;
+  /** Equipos que han escrito en el archivo. */
+  devices: string[];
+  /** Fecha del archivo remoto tras sincronizar. */
+  time: number;
 }

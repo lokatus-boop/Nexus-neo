@@ -11,6 +11,7 @@ import { ServersPanel } from './servers-panel';
 import { aboutDialog, ensureDisclaimerAccepted, logo } from './about';
 import { AUTHOR } from '../shared/legal';
 import { keysDialog } from './keys-dialog';
+import { syncDialog } from './sync-dialog';
 
 const serversPanel = new ServersPanel();
 import type { AuthPrompt, HostKeyPrompt, Macro, SessionConfig, Settings, TunnelStatus, VaultStatus } from '../shared/types';
@@ -684,6 +685,7 @@ async function palette(): Promise<void> {
     { label: 'Claves SSH (generar / instalar)…', sub: 'Acción', run: () => void openKeys() },
     { label: 'Servidores TFTP / FTP / HTTP / Syslog', sub: 'Acción', run: () => void serversPanel.toggle(true) },
     { label: 'Ajustes…', sub: 'Acción', run: () => void settingsDialog() },
+    { label: 'Sincronizar sesiones entre equipos…', sub: 'Acción', run: () => void openSync() },
     { label: 'Acerca de Nexus Neo', sub: 'Ayuda', run: () => void aboutDialog(state.info!) },
     { label: 'Importar ~/.ssh/config', sub: 'Acción', run: () => void importSessions('ssh-config') },
     ...state.macros.map((m) => ({ label: `Ejecutar macro: ${m.name}`, sub: 'Macro', run: () => void playMacro(m) })),
@@ -749,6 +751,23 @@ async function palette(): Promise<void> {
 function openKeys(): Promise<void> {
   const t = state.active;
   return keysDialog(t ? { connId: t.connId, title: t.title, isSsh: t.session.kind === 'ssh' && t.state === 'connected' } : null);
+}
+
+async function openSync(): Promise<void> {
+  await refreshVault();
+  const cfg = await syncDialog(state.settings!, state.sessions, state.vault.unlocked);
+  if (cfg) state.settings = { ...state.settings!, sync: cfg };
+  void updateSyncButton();
+}
+
+async function updateSyncButton(): Promise<void> {
+  const st = await api.sync.status();
+  const b = $('#btn-sync');
+  b.classList.toggle('active', st.configured);
+  b.classList.toggle('warn', !!st.lastError);
+  b.title = st.configured
+    ? `Sincronización cifrada${st.lastSync ? ` · última: ${new Date(st.lastSync).toLocaleTimeString()}` : ''}${st.lastError ? ` · error: ${st.lastError}` : ''}`
+    : 'Sincronización cifrada entre equipos (sin configurar)';
 }
 
 async function openLocal(): Promise<void> {
@@ -822,6 +841,7 @@ function buildLayout(): void {
         tbtn('btn-tunnels', 'tunnel', 'Túneles SSH', () => void tunnelsDialog(), el('span', { id: 'tunnel-count', class: 'badge' })),
         tbtn('btn-servers', 'server', 'Servidores TFTP / FTP / HTTP / Syslog (Ctrl+Mayús+E)', () => void serversPanel.toggle(), el('span', { id: 'servers-count', class: 'badge' })),
         tbtn('btn-keys', 'key', 'Claves SSH', () => void openKeys()),
+        tbtn('btn-sync', 'cloud', 'Sincronización cifrada entre equipos', () => void openSync()),
         tbtn('btn-vault', 'lock', 'Bóveda', () => void vaultDialog()),
         tbtn('btn-settings', 'settings', 'Ajustes', () => void settingsDialog()),
         tbtn('btn-about', 'info', 'Acerca de Nexus Neo', () => void aboutDialog(state.info!)),
@@ -903,6 +923,14 @@ async function main(): Promise<void> {
     state.tunnels = l;
     updateToolbar();
   });
+  api.sync.onApplied(async (st: { added: number; updated: number; removed: number }) => {
+    state.macros = await api.macros.list();
+    await reloadSessions();
+    const n = st.added + st.updated + st.removed;
+    if (n) toast(`Sincronización: ${st.added} nuevas, ${st.updated} actualizadas, ${st.removed} eliminadas`, 'ok');
+  });
+  api.sync.onStatus(() => void updateSyncButton());
+  void updateSyncButton();
   api.vault.onLocked(() => {
     void refreshVault();
     toast('La bóveda se ha bloqueado por inactividad');

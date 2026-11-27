@@ -82,6 +82,13 @@ const api = {
     onData: (fn: (chunk: Uint8Array) => void) => on('vnc:data', fn),
     onClosed: (fn: (reason?: string) => void) => on('vnc:closed', fn),
   },
+  sync: {
+    status: invoke('sync:status'),
+    configure: invoke('sync:configure'),
+    run: invoke('sync:run'),
+    onApplied: (fn: (stats: any) => void) => on('sync:applied', fn),
+    onStatus: (fn: (st: any) => void) => on('sync:status', fn),
+  },
   rdp: {
     prepare: invoke('rdp:prepare'),
     savePassword: invoke('rdp:savePassword'),
