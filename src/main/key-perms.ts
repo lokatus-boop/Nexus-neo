@@ -58,36 +58,41 @@ foreach($p in ($env:NN_KEY_PATHS -split "\`n")){
   if(-not $p){continue}
   "FILE|$p"
   try{
-    $acl=Get-Acl -LiteralPath $p
+    $acl=[System.IO.File]::GetAccessControl($p)
     try{"OWNER|"+$acl.GetOwner($sidT).Value}catch{}
     foreach($r in $acl.GetAccessRules($true,$true,$sidT)){
       $n=''
       try{$n=$r.IdentityReference.Translate([System.Security.Principal.NTAccount]).Value}catch{}
       "ACE|"+$r.IdentityReference.Value+"|"+$r.AccessControlType+"|"+[int64]$r.FileSystemRights+"|"+$n
     }
-  }catch{"ERROR|"+$_.Exception.Message}
+  }catch{"ERROR|"+$_.Exception.Message.Trim()}
 }
 `;
 
 // Sustituye la ACL por una protegida (sin herencia) con control total para el usuario y SYSTEM.
+// Se usan clases de .NET y no Get-Acl/Set-Acl: si PowerShell 7 está instalado, Windows PowerShell
+// puede heredar su PSModulePath y no lograr cargar esos cmdlets.
 const PS_FIX = PS_PREFIX + `
-$p=$env:NN_KEY_PATH
-$me=[System.Security.Principal.WindowsIdentity]::GetCurrent().User
-$sys=New-Object System.Security.Principal.SecurityIdentifier('${SYSTEM_SID}')
-$acl=New-Object System.Security.AccessControl.FileSecurity
-$acl.SetAccessRuleProtection($true,$false)
-$acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($me,'FullControl','Allow')))
-$acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($sys,'FullControl','Allow')))
-Set-Acl -LiteralPath $p -AclObject $acl
 try{
-  $o=Get-Acl -LiteralPath $p
-  $owner=$o.GetOwner([System.Security.Principal.SecurityIdentifier]).Value
-  if($owner -ne $me.Value -and $owner -ne '${SYSTEM_SID}' -and $owner -ne '${ADMINS_SID}'){
-    $o.SetOwner($me)
-    Set-Acl -LiteralPath $p -AclObject $o
-  }
-}catch{}
-"OK"
+  $p=$env:NN_KEY_PATH
+  $me=[System.Security.Principal.WindowsIdentity]::GetCurrent().User
+  $sys=New-Object System.Security.Principal.SecurityIdentifier('${SYSTEM_SID}')
+  $acl=New-Object System.Security.AccessControl.FileSecurity
+  $acl.SetAccessRuleProtection($true,$false)
+  $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($me,'FullControl','Allow')))
+  $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($sys,'FullControl','Allow')))
+  [System.IO.File]::SetAccessControl($p,$acl)
+  try{
+    $o=[System.IO.File]::GetAccessControl($p,[System.Security.AccessControl.AccessControlSections]::Owner)
+    $owner=$o.GetOwner([System.Security.Principal.SecurityIdentifier]).Value
+    if($owner -ne $me.Value -and $owner -ne '${SYSTEM_SID}' -and $owner -ne '${ADMINS_SID}'){
+      $n=New-Object System.Security.AccessControl.FileSecurity
+      $n.SetOwner($me)
+      [System.IO.File]::SetAccessControl($p,$n)
+    }
+  }catch{}
+  "OK"
+}catch{"FAIL|"+$_.Exception.Message.Trim()}
 `;
 
 /** Ejecuta PowerShell de Windows sin perfil y con el script codificado (sin problemas de comillas). */
@@ -95,12 +100,17 @@ export const defaultPowerShell: PsRunner = (script, env) =>
   new Promise((resolvePs, reject) => {
     const exe = join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
     const encoded = Buffer.from(script, 'utf16le').toString('base64');
+    // Sin el PSModulePath de PowerShell 7, que impide a Windows PowerShell cargar sus módulos.
+    const baseEnv = { ...process.env };
+    for (const k of Object.keys(baseEnv)) if (k.toLowerCase() === 'psmodulepath') delete baseEnv[k];
     execFile(
       existsSync(exe) ? exe : 'powershell.exe',
       ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded],
-      { env: { ...process.env, ...env }, windowsHide: true, timeout: 20000, maxBuffer: 4 * 1024 * 1024 },
+      { env: { ...baseEnv, ...env }, windowsHide: true, timeout: 20000, maxBuffer: 4 * 1024 * 1024 },
       (err, stdout, stderr) => {
-        if (err) reject(new Error((stderr || err.message).toString().trim()));
+        // Los errores de PowerShell por stderr llegan en CLIXML: se quita el marcado.
+        const clean = (t: string) => t.replace(/^#< CLIXML\s*/, '').replace(/<[^>]+>/g, '').replace(/_x000D__x000A_/g, ' ').replace(/\s+/g, ' ').trim();
+        if (err) reject(new Error(clean((stderr || err.message).toString())));
         else resolvePs(stdout.toString());
       },
     );
@@ -208,7 +218,9 @@ export async function protectKeyFile(path: string, opts: PermOptions = {}): Prom
     if (platform === 'win32') {
       const run = opts.runPowerShell ?? defaultPowerShell;
       const r = await run(PS_FIX, { NN_KEY_PATH: path });
-      if (!/\bOK\b/.test(r)) throw new Error(r.trim() || 'PowerShell no confirmó el cambio.');
+      const failed = /^FAIL\|(.*)$/m.exec(r);
+      if (failed) throw new Error(failed[1].trim());
+      if (!/^OK\s*$/m.test(r)) throw new Error(r.trim() || 'PowerShell no confirmó el cambio.');
     } else {
       await fs.chmod(path, 0o600);
     }

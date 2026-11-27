@@ -83,7 +83,8 @@ test('en Windows detecta y corrige una clave con permisos heredados', async () =
   // La ruta viaja por variable de entorno, nunca dentro del script.
   assert.ok(!fix.script.includes(path));
   assert.match(fix.script, /SetAccessRuleProtection\(\$true,\$false\)/);
-  assert.match(fix.script, /Set-Acl -LiteralPath \$p/);
+  assert.match(fix.script, /\[System.IO.File\]::SetAccessControl\(\$p,\$acl\)/);
+  assert.ok(!/Get-Acl|Set-Acl/.test(fix.script), 'sin cmdlets: pueden no cargar si hay PowerShell 7');
 });
 
 test('en Windows, si no se puede corregir, el error explica cómo hacerlo a mano', async () => {
@@ -101,6 +102,11 @@ test('en Windows, si tras corregir sigue habiendo accesos, falla con detalle', a
   const path = 'C:\\k';
   const run: PsRunner = async (_s, env) => (env.NN_KEY_PATH ? 'OK' : `USER|${ME}\nFILE|${path}\nACE|S-1-1-0|Allow|${READ}|Todos`);
   await assert.rejects(protectKeyFile(path, { platform: 'win32', runPowerShell: run }), /siguen teniendo acceso Todos \(S-1-1-0\)/);
+});
+
+test('en Windows, un FAIL| de PowerShell se convierte en un error legible', async () => {
+  const run: PsRunner = async (_s, env) => (env.NN_KEY_PATH ? 'FAIL|Acceso denegado a la ruta.\r\n' : `USER|${ME}\nFILE|C:\\k`);
+  await assert.rejects(protectKeyFile('C:\\k', { platform: 'win32', runPowerShell: run }), /permisos de k: Acceso denegado a la ruta\.\nEjecuta en PowerShell/);
 });
 
 test('checkKeyPermissionsMany usa una sola llamada a PowerShell para varias claves', async () => {
