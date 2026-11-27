@@ -122,7 +122,12 @@ export async function editSession(initial: Partial<SessionConfig>, ctx: EditorCo
 
   // --- RDP ---
   const rdpFull = checkbox('Pantalla completa', !!s.rdpFullscreen);
-  const rdpRes = input({ value: s.rdpResolution || '', placeholder: '1920x1080' });
+  const rdpPassword = input({ type: 'password', placeholder: ctx.vault.unlocked ? (hasSecret ? 'Guardada. Déjalo vacío para mantenerla.' : 'Se guarda cifrada en la bóveda') : 'Desbloquea la bóveda para guardarla' });
+  if (!ctx.vault.unlocked) rdpPassword.disabled = true;
+  const rdpRes = input({ value: s.rdpResolution || '', placeholder: 'Vacío = se adapta a la ventana' });
+  const rdpDomain = input({ value: s.rdpDomain || '', placeholder: 'Opcional' });
+  const rdpExternal = checkbox('Abrir con el cliente RDP del sistema (mstsc / xfreerdp) en lugar del visor integrado', !!s.rdpExternal);
+  const rdpTunnel = select([['', '— Conexión directa —'], ...ctx.sessions.filter((x) => x.kind === 'ssh').map((x) => [x.id, `${x.name} (${x.host})`] as [string, string])], s.kind === 'rdp' ? s.jumpSessionId || '' : '');
   const vncExternal = checkbox('Abrir con el cliente VNC del sistema en lugar del visor integrado', !!s.vncExternal);
   const vncTunnel = select([['', '— Conexión directa —'], ...ctx.sessions.filter((x) => x.kind === 'ssh').map((x) => [x.id, `${x.name} (${x.host})`] as [string, string])], s.kind === 'vnc' ? s.jumpSessionId || '' : '');
 
@@ -146,8 +151,12 @@ export async function editSession(initial: Partial<SessionConfig>, ctx: EditorCo
     vnc: el('fieldset', {}, el('legend', {}, 'VNC'),
       field('Túnel a través de la sesión SSH', vncTunnel, 'Conecta al VNC a través de un servidor SSH (p. ej. host 127.0.0.1 si el VNC escucha sólo en local).'),
       vncExternal.wrap),
-    rdp: el('fieldset', {}, el('legend', {}, 'Escritorio remoto'), el('div', { class: 'grid2' }, field('Resolución', rdpRes), el('div', {}, rdpFull.wrap)),
-      el('small', { class: 'hint' }, 'RDP se abre con el cliente del sistema (mstsc en Windows, xfreerdp en Linux). El visor RDP integrado está en la hoja de ruta.')),
+    rdp: el('fieldset', {}, el('legend', {}, 'Escritorio remoto (RDP)'),
+      el('div', { class: 'grid2' }, field('Contraseña', rdpPassword), el('div', {})),
+      el('div', { class: 'grid3' }, field('Dominio', rdpDomain), field('Resolución', rdpRes), el('div', {}, rdpFull.wrap)),
+      field('Túnel a través de la sesión SSH', rdpTunnel, 'Llega al escritorio remoto a través de un servidor SSH, sin abrir el puerto 3389 a Internet.'),
+      rdpExternal.wrap,
+      el('small', { class: 'hint' }, 'El visor integrado admite NLA/CredSSP y TLS, portapapeles, Ctrl+Alt+Supr, resolución dinámica y pantalla completa. La contraseña se guarda cifrada en la bóveda.')),
   };
 
   const update = () => {
@@ -232,9 +241,20 @@ export async function editSession(initial: Partial<SessionConfig>, ctx: EditorCo
             localEcho: localEcho.box.checked,
           });
         }
-        if (k === 'rdp') Object.assign(out, { rdpFullscreen: rdpFull.box.checked, rdpResolution: rdpRes.value.trim() || undefined });
+        if (k === 'rdp') {
+          const res = rdpRes.value.trim();
+          if (res && !/^\d{3,4}x\d{3,4}$/.test(res)) throw new Error('La resolución debe tener la forma 1920x1080.');
+          Object.assign(out, {
+            rdpFullscreen: rdpFull.box.checked,
+            rdpResolution: res || undefined,
+            rdpDomain: rdpDomain.value.trim() || undefined,
+            rdpExternal: rdpExternal.box.checked || undefined,
+            jumpSessionId: rdpTunnel.value || undefined,
+          });
+        }
         if (k === 'vnc') Object.assign(out, { vncExternal: vncExternal.box.checked || undefined, jumpSessionId: vncTunnel.value || undefined });
 
+        if (k === 'rdp' && rdpPassword.value) password.value = rdpPassword.value;
         const secret = password.value || passphrase.value ? { password: password.value || undefined, passphrase: passphrase.value || undefined } : null;
         const saved = (await api.sessions.save(out, secret)) as SessionConfig;
         if (clearSecret.box.checked) await api.sessions.clearSecret(saved.id);

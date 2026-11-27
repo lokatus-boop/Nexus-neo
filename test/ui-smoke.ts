@@ -248,6 +248,32 @@ async function main() {
   await vnc.close();
   console.log('✔ visor VNC integrado');
 
+  // Visor RDP integrado (sólo si hay un servidor RDP de pruebas, p. ej. xrdp en CI).
+  if (process.env.NEXUS_RDP_TEST) {
+    await qc.fill(`rdp://usuario@${process.env.NEXUS_RDP_TEST}`);
+    const [rdpWin] = await Promise.all([app.waitForEvent('window'), qc.press('Enter')]);
+    rdpWin.on('pageerror', (e: Error) => errors.push(`[rdp] ${e.message}`));
+    await rdpWin.waitForSelector('#login-box', { timeout: 15000 });
+    await rdpWin.fill('#login-box input[type=password]', 'secreto');
+    await rdpWin.click('#login-box .primary');
+    await rdpWin.waitForSelector('#cert-box', { timeout: 15000 });
+    await rdpWin.click('#cert-box .primary');
+    await rdpWin.waitForSelector('#status.ok', { timeout: 30000 });
+    await rdpWin.waitForFunction(() => {
+      const c = document.querySelector('iron-remote-desktop')?.shadowRoot?.querySelector('canvas') as HTMLCanvasElement | null;
+      if (!c || c.width < 300) return false;
+      const ctx = c.getContext('2d');
+      if (!ctx) return false;
+      const d = ctx.getImageData(0, 0, c.width, c.height).data;
+      const colors = new Set<number>();
+      for (let i = 0; i < d.length && colors.size < 8; i += 4 * 97) colors.add((d[i] << 16) | (d[i + 1] << 8) | d[i + 2]);
+      return colors.size >= 8;
+    }, null, { timeout: 30000 });
+    await rdpWin.screenshot({ path: join(shots, '11-visor-rdp.png') });
+    await rdpWin.close();
+    console.log('✔ visor RDP integrado');
+  } else console.log('… visor RDP: sin servidor de pruebas (define NEXUS_RDP_TEST=host:puerto)');
+
   // Tema claro
   await page.click('#btn-settings');
   await page.locator('.modal .field:has-text("Tema") select').selectOption('nexus-light');

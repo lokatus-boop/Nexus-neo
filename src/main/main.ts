@@ -8,6 +8,7 @@ import { Vault } from './vault';
 import { TerminalConnection, Prompter } from './protocols/base';
 import { SshConnection, SshDeps, connectClient } from './protocols/ssh';
 import { VncBridge } from './vnc-bridge';
+import { RdpGateway } from './rdp/gateway';
 import { LocalConnection, detectShells } from './protocols/local';
 import { TelnetConnection } from './protocols/telnet';
 import { SerialConnection, listSerialPorts } from './protocols/serial';
@@ -88,6 +89,49 @@ function openVncWindow(cfg: SessionConfig): void {
   w.on('closed', () => {
     vncWindows.get(id)?.bridge?.close();
     vncWindows.delete(id);
+  });
+}
+
+// --- Visor RDP integrado -----------------------------------------------------
+// IronRDP (WebAssembly) dibuja el escritorio en una ventana propia y habla con el servidor a
+// través de la pasarela RDCleanPath local, que hace el TCP/TLS (o el túnel SSH).
+const rdpGateway = new RdpGateway();
+const rdpWindows = new Map<string, { cfg: SessionConfig; win: BrowserWindow; token?: string; ssh?: import('ssh2').Client }>();
+
+/** Pregunta algo a una ventana concreta y espera su respuesta por prompt:reply. */
+function askWindow<T>(w: BrowserWindow, channel: string, payload: unknown): Promise<T> {
+  return new Promise((resolve) => {
+    const id = randomUUID();
+    pending.set(id, resolve as (v: unknown) => void);
+    if (w.isDestroyed()) return resolve(false as T);
+    w.webContents.send(channel, id, payload);
+    w.once('closed', () => {
+      if (pending.delete(id)) resolve(false as T);
+    });
+  });
+}
+
+function openRdpWindow(cfg: SessionConfig): void {
+  const id = randomUUID();
+  const [w0, h0] = (cfg.rdpResolution || '').split('x').map(Number);
+  const w = new BrowserWindow({
+    width: w0 > 0 ? Math.min(w0 + 16, 3840) : 1366,
+    height: h0 > 0 ? Math.min(h0 + 60, 2160) : 860,
+    backgroundColor: '#0b0f14',
+    title: `${cfg.name} — RDP · Nexus Neo`,
+    icon: windowIcon(),
+    autoHideMenuBar: true,
+    fullscreen: !!cfg.rdpFullscreen,
+    webPreferences: { preload: join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true },
+  });
+  w.setMenu(null);
+  rdpWindows.set(id, { cfg, win: w });
+  void w.loadFile(join(__dirname, 'renderer/rdp.html'), { query: { id } });
+  w.on('closed', () => {
+    const e = rdpWindows.get(id);
+    if (e?.token) rdpGateway.revoke(e.token);
+    e?.ssh?.end();
+    rdpWindows.delete(id);
   });
 }
 
@@ -223,6 +267,10 @@ function registerIpc(): void {
     const settings = await store.getSettings();
     if (cfg.kind === 'vnc' && !cfg.vncExternal) {
       openVncWindow(cfg);
+      return;
+    }
+    if (cfg.kind === 'rdp' && !cfg.rdpExternal && !settings.rdpClient) {
+      openRdpWindow(cfg);
       return;
     }
     if (cfg.kind === 'rdp' || cfg.kind === 'vnc') {
@@ -406,6 +454,68 @@ function registerIpc(): void {
   });
   handle('logs:dir', async () => (await store.getSettings()).logDir || join(store.dir, 'logs'));
 
+  // --- RDP ---------------------------------------------------------------
+  ipcMain.handle('rdp:prepare', async (_e, id: string) => {
+    const entry = rdpWindows.get(id);
+    if (!entry) throw new Error('Sesión RDP desconocida');
+    const { cfg, win: w } = entry;
+    const host = cfg.host || 'localhost';
+    const port = cfg.port || 3389;
+    await rdpGateway.start();
+    let via = '';
+    let openTransport: (() => Promise<import('node:stream').Duplex>) | undefined;
+    if (cfg.jumpSessionId) {
+      const sessions = await store.listSessions();
+      const jump = sessions.find((s) => s.id === cfg.jumpSessionId);
+      if (!jump) throw new Error('La sesión SSH del túnel no existe.');
+      via = ` a través de ${jump.name}`;
+      openTransport = async () => {
+        entry.ssh?.end();
+        const ssh = await connectClient(jump, sshDeps(`rdp-${id}`, sessions));
+        entry.ssh = ssh;
+        return new Promise((resolve, reject) =>
+          ssh.forwardOut('127.0.0.1', 0, host, port, (err, ch) => (err ? reject(err) : resolve(ch))));
+      };
+    }
+    if (entry.token) rdpGateway.revoke(entry.token);
+    const { url, token } = rdpGateway.issue({
+      host,
+      port,
+      openTransport,
+      verifyCertificate: async (c) => {
+        const kid = `rdp:[${c.host}]:${c.port}`;
+        const known = store.knownHost(kid);
+        if (known === c.fingerprint) return true;
+        const ok = await askWindow<boolean>(w, 'rdp:cert', { ...c, previous: known });
+        if (ok) await store.setKnownHost(kid, c.fingerprint);
+        return ok;
+      },
+    });
+    entry.token = token;
+    const secret = vault.isUnlocked() ? vault.get(cfg.id) : undefined;
+    const [width, height] = (cfg.rdpResolution || '').split('x').map(Number);
+    return {
+      name: cfg.name,
+      target: `${host}:${port}${via}`,
+      destination: `${host}:${port}`,
+      url,
+      token,
+      username: cfg.username || '',
+      domain: cfg.rdpDomain || '',
+      password: secret?.password ?? null,
+      canSave: vault.isUnlocked() && !cfg.id.startsWith('quick-'),
+      width: width > 0 ? width : 0,
+      height: height > 0 ? height : 0,
+    };
+  });
+  ipcMain.handle('rdp:savePassword', async (_e, id: string, password: string) => {
+    const entry = rdpWindows.get(id);
+    if (!entry || !vault.isUnlocked()) return false;
+    await vault.set(entry.cfg.id, { ...(vault.get(entry.cfg.id) || {}), password });
+    return true;
+  });
+  ipcMain.on('rdp:activity', () => (lastActivity = Date.now()));
+
   // --- VNC ---------------------------------------------------------------
   ipcMain.handle('vnc:connect', async (e, id: string) => {
     const entry = vncWindows.get(id);
@@ -492,5 +602,5 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
-  void servers.stopAll().finally(() => app.quit());
+  void Promise.all([servers.stopAll(), rdpGateway.stop()]).finally(() => app.quit());
 });

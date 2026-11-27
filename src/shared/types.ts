@@ -71,6 +71,10 @@ export interface SessionConfig {
   // RDP / VNC
   rdpFullscreen?: boolean;
   rdpResolution?: string;
+  /** RDP: dominio de Windows (opcional). */
+  rdpDomain?: string;
+  /** RDP: abrir con el cliente del sistema (mstsc/xfreerdp) en lugar del visor integrado. */
+  rdpExternal?: boolean;
 }
 
 export interface Macro {

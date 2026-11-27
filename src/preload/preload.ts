@@ -82,6 +82,12 @@ const api = {
     onData: (fn: (chunk: Uint8Array) => void) => on('vnc:data', fn),
     onClosed: (fn: (reason?: string) => void) => on('vnc:closed', fn),
   },
+  rdp: {
+    prepare: invoke('rdp:prepare'),
+    savePassword: invoke('rdp:savePassword'),
+    activity: () => ipcRenderer.send('rdp:activity'),
+    onCert: (fn: (reqId: string, p: any) => void) => on('rdp:cert', fn),
+  },
   pickDir: invoke('dialog:pickDir'),
   openPath: invoke('shell:openPath'),
   logsDir: invoke('logs:dir'),

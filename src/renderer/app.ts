@@ -67,7 +67,8 @@ async function openSession(session: SessionConfig): Promise<Tab | null> {
   if (session.kind === 'rdp' || session.kind === 'vnc') {
     try {
       await api.conn.open(uid(), { session, cols: 80, rows: 24 });
-      toast(session.kind === 'vnc' && !session.vncExternal ? `VNC: abriendo ${session.name} en el visor integrado` : `${session.kind.toUpperCase()} abierto con el cliente del sistema`, 'ok');
+      const integrated = session.kind === 'vnc' ? !session.vncExternal : !session.rdpExternal && !state.settings!.rdpClient;
+      toast(integrated ? `${session.kind.toUpperCase()}: abriendo ${session.name} en el visor integrado` : `${session.kind.toUpperCase()} abierto con el cliente del sistema`, 'ok');
     } catch (e) {
       toast(errMsg(e), 'error');
     }
@@ -586,7 +587,7 @@ async function settingsDialog(): Promise<void> {
   const rcp = checkbox('Pegar con clic derecho', s.rightClickPaste);
   const coc = checkbox('Confirmar al cerrar pestañas remotas', s.confirmOnClose);
   const shell = select([['', 'Automático'], ...state.info!.shells.map((x) => [x.id, x.name] as [string, string])], s.defaultLocalShell);
-  const rdp = input({ value: s.rdpClient, placeholder: 'Automático (mstsc / xfreerdp)' });
+  const rdp = input({ value: s.rdpClient, placeholder: 'Vacío = visor integrado (o mstsc / xfreerdp)' });
   const vnc = input({ value: s.vncClient, placeholder: 'vncviewer' });
   const autolock = input({ type: 'number', value: String(s.vaultAutoLockMin), min: '0' });
   const logAll = checkbox('Guardar un registro de todas las sesiones', s.logAllSessions);
