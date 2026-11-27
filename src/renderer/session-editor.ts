@@ -2,6 +2,7 @@
 import { api, uid } from './api';
 import { el, field, input, select, checkbox, modal, icon, toast } from './ui';
 import { DEFAULT_PORTS } from './quick-connect';
+import { ensureKeyPermissions } from './keys-dialog';
 import type { Macro, SessionConfig, SessionKind, TunnelConfig, VaultStatus } from '../shared/types';
 
 const KIND_LABEL: Record<SessionKind, string> = { ssh: 'SSH', local: 'Terminal local', telnet: 'Telnet', serial: 'Serie', rdp: 'RDP', vnc: 'VNC' };
@@ -46,9 +47,10 @@ export async function editSession(initial: Partial<SessionConfig>, ctx: EditorCo
   // --- SSH ---
   const auth = select([['password', 'Contraseña'], ['key', 'Clave privada'], ['agent', 'Agente SSH']], s.auth || 'password');
   const keyPath = input({ value: s.keyPath || '', placeholder: 'Vacío = ~/.ssh/id_ed25519, id_rsa…' });
+  let checkedKeyPath = s.keyPath || '';
   const keyBtn = el('button', { class: 'btn ghost', type: 'button', onclick: async () => {
     const p = await api.pickFile('Selecciona la clave privada');
-    if (p) keyPath.value = p;
+    if (p) keyPath.value = checkedKeyPath = await ensureKeyPermissions(p);
   } }, 'Examinar…');
   const password = input({ type: 'password', placeholder: ctx.vault.unlocked ? 'Se guarda cifrada en la bóveda' : 'Desbloquea la bóveda para guardarla' });
   const passphrase = input({ type: 'password', placeholder: 'Frase de paso de la clave (opcional)' });
@@ -202,6 +204,9 @@ export async function editSession(initial: Partial<SessionConfig>, ctx: EditorCo
           out.host = host.value.trim();
           out.port = Number(port.value) || DEFAULT_PORTS[k];
           if (k !== 'vnc') out.username = username.value.trim() || undefined;
+        }
+        if (k === 'ssh' && auth.value === 'key' && keyPath.value.trim() && keyPath.value.trim() !== checkedKeyPath) {
+          keyPath.value = checkedKeyPath = await ensureKeyPermissions(keyPath.value.trim());
         }
         if (k === 'ssh') {
           Object.assign(out, {

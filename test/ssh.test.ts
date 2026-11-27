@@ -8,18 +8,22 @@ import { startTestServer, TestServer } from './helpers/ssh-server';
 import { SshConnection, SshDeps, fingerprintOf, parseDisplay } from '../src/main/protocols/ssh';
 import { TelnetConnection } from '../src/main/protocols/telnet';
 import * as sftpOps from '../src/main/sftp-ops';
+import { generateKeyPairChecked } from '../src/main/keys';
+import { execFileSync } from 'node:child_process';
+import { chmodSync } from 'node:fs';
 import type { SessionConfig, SecretEntry } from '../src/shared/types';
 
 let srv: TestServer;
 let root: string;
 let echo: Server;
 let echoPort: number;
+const clientKey = generateKeyPairChecked('ed25519', { comment: 'cliente' });
 
 before(async () => {
   root = mkdtempSync(join(tmpdir(), 'nexus-sftp-'));
   mkdirSync(join(root, 'docs'));
   writeFileSync(join(root, 'docs', 'leeme.txt'), 'hola mundo');
-  srv = await startTestServer(root);
+  srv = await startTestServer(root, { user: 'nexus', pass: 'secreto', authorizedKeys: [clientKey.public] });
   echo = createServer((s) => s.on('data', (d) => s.write(`ECO ${d}`)));
   await new Promise<void>((r) => echo.listen(0, '127.0.0.1', () => r()));
   echoPort = (echo.address() as AddressInfo).port;
@@ -90,6 +94,22 @@ test('SSH: verifica la huella (TOFU), autentica con la bóveda y abre shell', as
   await c2.open(80, 24);
   assert.equal(asked.length, 1);
   c2.close();
+});
+
+test('SSH: autentica con un archivo de clave aunque otros usuarios puedan leerlo', async () => {
+  // Es el caso que OpenSSH rechaza con «UNPROTECTED PRIVATE KEY FILE»: Nexus Neo debe conectar igual.
+  const keyFile = join(root, '..', `nn-open-key-${process.pid}.key`);
+  writeFileSync(keyFile, clientKey.private);
+  if (process.platform === 'win32') execFileSync('icacls', [keyFile, '/grant', '*S-1-1-0:(R)']);
+  else chmodSync(keyFile, 0o644);
+  let prompts = 0;
+  const { d } = deps({ prompter: { hostKey: async () => true, auth: async () => (prompts++, null) } });
+  const c = new SshConnection(cfg({ auth: 'key', keyPath: keyFile }), d, 'ck');
+  const welcome = waitFor(c, 'Bienvenido');
+  await c.open(80, 24);
+  await welcome;
+  assert.equal(prompts, 0, 'no debería pedir contraseña: entra con la clave');
+  c.close();
 });
 
 test('SSH: detecta cambio de clave de host y aborta si el usuario no acepta', async () => {

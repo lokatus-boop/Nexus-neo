@@ -84,7 +84,7 @@ const api = {
   pickDir: invoke('dialog:pickDir'),
   openPath: invoke('shell:openPath'),
   logsDir: invoke('logs:dir'),
-  keys: { list: invoke('keys:list'), generate: invoke('keys:generate'), install: invoke('keys:install'), openDir: invoke('keys:openDir') },
+  keys: { list: invoke('keys:list'), generate: invoke('keys:generate'), install: invoke('keys:install'), openDir: invoke('keys:openDir'), checkPerms: invoke('keys:checkPerms'), fixPerms: invoke('keys:fixPerms'), import: invoke('keys:import') },
   pickFile: invoke('dialog:pickFile'),
   openExternal: invoke('shell:openExternal'),
   pathForFile: (f: File) => webUtils.getPathForFile(f),

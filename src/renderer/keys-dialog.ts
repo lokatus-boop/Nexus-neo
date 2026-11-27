@@ -10,6 +10,58 @@ interface KeyInfo {
   fingerprint: string;
   comment: string;
   encrypted: boolean;
+  permsOk?: boolean;
+  permsIssue?: string;
+}
+
+interface PermCheck {
+  ok: boolean;
+  offenders: string[];
+  badOwner?: string;
+}
+
+/** Muestra un error de permisos con sus instrucciones manuales (respeta los saltos de línea). */
+export async function permErrorDialog(e: unknown): Promise<void> {
+  await modal('No se pudieron corregir los permisos', el('pre', { class: 'perm-error' }, errMsg(e)), [
+    { label: 'Cerrar', value: true, kind: 'primary' },
+  ], { dismiss: true });
+}
+
+/**
+ * Comprueba si `ssh` (OpenSSH) aceptaría los permisos de la clave elegida y, si no, ofrece
+ * corregirlos o copiarla protegida a la carpeta .ssh. Devuelve la ruta que debe usarse.
+ */
+export async function ensureKeyPermissions(path: string): Promise<string> {
+  let check: PermCheck;
+  try {
+    check = (await api.keys.checkPerms(path)) as PermCheck;
+  } catch {
+    return path; // sin información: Nexus Neo puede usarla igualmente
+  }
+  if (check.ok) return path;
+  const who = [...check.offenders, ...(check.badOwner ? [`propietario ${check.badOwner}`] : [])].join(', ');
+  const choice = await modal<'fix' | 'import' | 'keep'>('Permisos de la clave demasiado abiertos', el('div', {},
+    el('p', {}, 'Otros usuarios del equipo pueden leer esta clave privada. Nexus Neo puede usarla igualmente, pero ', el('code', {}, 'ssh -i'), ', scp, git y otros programas basados en OpenSSH la rechazarán con «UNPROTECTED PRIVATE KEY FILE».'),
+    el('p', {}, el('strong', {}, 'Con acceso: '), who),
+    el('small', { class: 'hint' }, '«Corregir» deja la clave legible sólo por tu usuario. «Copiar a .ssh» guarda una copia protegida en tu carpeta .ssh y la usa en esta sesión.'),
+  ), [
+    { label: 'Dejar así', value: 'keep', kind: 'ghost' },
+    { label: 'Copiar a .ssh', value: 'import', kind: 'ghost' },
+    { label: 'Corregir permisos', value: 'fix', kind: 'primary' },
+  ], { dismiss: 'keep' });
+  try {
+    if (choice === 'fix') {
+      await api.keys.fixPerms(path);
+      toast('Permisos corregidos: sólo tu usuario puede leer la clave', 'ok');
+    } else if (choice === 'import') {
+      const r = (await api.keys.import(path)) as { privatePath: string };
+      toast(`Clave copiada y protegida en ${r.privatePath}`, 'ok');
+      return r.privatePath;
+    }
+  } catch (e) {
+    await permErrorDialog(e);
+  }
+  return path;
 }
 
 export async function keysDialog(active: { connId: string; title: string; isSsh: boolean } | null): Promise<void> {
@@ -31,7 +83,17 @@ export async function keysDialog(active: { connId: string; title: string; isSsh:
       ...keys.map((k) => el('div', { class: 'macro-row' },
         el('div', { class: 'macro-info' },
           el('strong', {}, `${k.name}${k.encrypted ? ' 🔒' : ''}`),
-          el('code', {}, `${k.type} · ${k.fingerprint}${k.comment ? ' · ' + k.comment : ''}`)),
+          el('code', {}, `${k.type} · ${k.fingerprint}${k.comment ? ' · ' + k.comment : ''}`),
+          k.permsOk === false ? el('small', { class: 'perm-warn' }, `⚠ Permisos demasiado abiertos (${k.permsIssue}). «ssh -i» la rechazará.`) : null),
+        k.permsOk === false ? el('button', { class: 'btn ghost', title: 'Dejar la clave legible sólo por tu usuario', onclick: async () => {
+          try {
+            await api.keys.fixPerms(k.privatePath);
+            toast(`Permisos de ${k.name} corregidos`, 'ok');
+            await render();
+          } catch (e) {
+            await permErrorDialog(e);
+          }
+        } }, icon('lock', 14), ' Corregir') : null,
         el('button', { class: 'btn ghost', title: 'Copiar la clave pública', onclick: () => {
           void navigator.clipboard.writeText(k.publicKey);
           toast('Clave pública copiada');
@@ -44,6 +106,18 @@ export async function keysDialog(active: { connId: string; title: string; isSsh:
   await render();
   await modal('Claves SSH', el('div', {}, list, dirLabel,
     el('small', { class: 'hint' }, active?.isSsh ? `«Instalar» añade la clave pública al authorized_keys de ${active.title}.` : 'Para instalar una clave en un servidor, selecciona antes una pestaña SSH conectada.')), [
+    { label: 'Importar…', kind: 'ghost', value: async () => {
+      try {
+        const r = (await api.keys.import()) as { privatePath: string; copied: boolean } | null;
+        if (r) {
+          toast(r.copied ? `Clave importada y protegida en ${r.privatePath}` : `Permisos de ${r.privatePath} corregidos`, 'ok');
+          await render();
+        }
+      } catch (e) {
+        await permErrorDialog(e);
+      }
+      return undefined;
+    } },
     { label: 'Abrir carpeta', kind: 'ghost', value: async () => {
       await api.keys.openDir();
       return undefined;
@@ -96,6 +170,7 @@ async function generateDialog(): Promise<KeyInfo | null> {
         name: name.value.trim(),
       })) as KeyInfo;
       toast(`Clave generada: ${k.privatePath}`, 'ok');
+      if (k.permsOk === false) await permErrorDialog(k.permsIssue);
       return k;
     } },
   ], { dismiss: null });

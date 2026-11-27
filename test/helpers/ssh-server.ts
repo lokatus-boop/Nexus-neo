@@ -18,17 +18,27 @@ function toAttrs(st: Stats) {
   return { mode: st.mode, uid: st.uid, gid: st.gid, size: st.size, atime: Math.floor(st.atimeMs / 1000), mtime: Math.floor(st.mtimeMs / 1000) };
 }
 
-export async function startTestServer(root: string, creds = { user: 'nexus', pass: 'secreto' }): Promise<TestServer> {
+export async function startTestServer(root: string, creds: { user: string; pass: string; authorizedKeys?: string[] } = { user: 'nexus', pass: 'secreto' }): Promise<TestServer> {
+  const allowed = (creds.authorizedKeys || []).map((k) => {
+    const p = utils.parseKey(k);
+    if (p instanceof Error) throw p;
+    return Array.isArray(p) ? p[0] : p;
+  });
   const hostKey = generateKeyPairChecked('ed25519');
   const server = new Server({ hostKeys: [hostKey.private] }, (client: Connection) => {
     const remoteListeners: NetServer[] = [];
     client.on('authentication', (ctx) => {
       if (ctx.username === creds.user && ctx.method === 'password' && ctx.password === creds.pass) return ctx.accept();
+      if (ctx.method === 'publickey' && ctx.username === creds.user) {
+        const k = allowed.find((a) => a.type === ctx.key.algo && a.getPublicSSH().equals(ctx.key.data));
+        if (k && (!ctx.signature || k.verify(ctx.blob!, ctx.signature, ctx.hashAlgo) === true)) return ctx.accept();
+        return ctx.reject();
+      }
       if (ctx.method === 'keyboard-interactive') {
         return ctx.prompt([{ prompt: 'Password: ', echo: false }], (answers) =>
           answers[0] === creds.pass && ctx.username === creds.user ? ctx.accept() : ctx.reject());
       }
-      ctx.reject(['password', 'keyboard-interactive']);
+      ctx.reject(['publickey', 'password', 'keyboard-interactive']);
     });
     client.on('ready', () => {
       client.on('tcpip', (accept, reject, info) => {
