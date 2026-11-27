@@ -12,6 +12,7 @@ import { aboutDialog, ensureDisclaimerAccepted, logo } from './about';
 import { AUTHOR } from '../shared/legal';
 import { keysDialog } from './keys-dialog';
 import { syncDialog } from './sync-dialog';
+import { netopsDialog } from './netops-dialog';
 
 const serversPanel = new ServersPanel();
 import type { AuthPrompt, HostKeyPrompt, Macro, SessionConfig, Settings, TunnelStatus, VaultStatus } from '../shared/types';
@@ -686,6 +687,9 @@ async function palette(): Promise<void> {
     { label: 'Servidores TFTP / FTP / HTTP / Syslog', sub: 'Acción', run: () => void serversPanel.toggle(true) },
     { label: 'Ajustes…', sub: 'Acción', run: () => void settingsDialog() },
     { label: 'Sincronizar sesiones entre equipos…', sub: 'Acción', run: () => void openSync() },
+    { label: 'Despliegue masivo a switches y routers…', sub: 'Red', run: () => void openNetops('deploy') },
+    { label: 'Plantillas de configuración…', sub: 'Red', run: () => void openNetops('templates') },
+    { label: 'Respaldos de configuración…', sub: 'Red', run: () => void openNetops('backups') },
     { label: 'Acerca de Nexus Neo', sub: 'Ayuda', run: () => void aboutDialog(state.info!) },
     { label: 'Importar ~/.ssh/config', sub: 'Acción', run: () => void importSessions('ssh-config') },
     ...state.macros.map((m) => ({ label: `Ejecutar macro: ${m.name}`, sub: 'Macro', run: () => void playMacro(m) })),
@@ -759,6 +763,14 @@ async function openSync(): Promise<void> {
   if (cfg) state.settings = { ...state.settings!, sync: cfg };
   void updateSyncButton();
 }
+
+async function openNetops(tab: 'deploy' | 'templates' | 'backups'): Promise<void> {
+  await refreshVault();
+  state.settings = await api.settings.get();
+  await netopsDialog(state.settings!, state.vault.unlocked, tab);
+}
+
+api.onToast((msg: string, kind: 'info' | 'ok' | 'error') => toast(msg, kind));
 
 async function updateSyncButton(): Promise<void> {
   const st = await api.sync.status();
@@ -841,6 +853,7 @@ function buildLayout(): void {
         tbtn('btn-tunnels', 'tunnel', 'Túneles SSH', () => void tunnelsDialog(), el('span', { id: 'tunnel-count', class: 'badge' })),
         tbtn('btn-servers', 'server', 'Servidores TFTP / FTP / HTTP / Syslog (Ctrl+Mayús+E)', () => void serversPanel.toggle(), el('span', { id: 'servers-count', class: 'badge' })),
         tbtn('btn-keys', 'key', 'Claves SSH', () => void openKeys()),
+        tbtn('btn-netops', 'network', 'Operaciones de red: despliegue masivo, plantillas y respaldos', () => void openNetops('deploy')),
         tbtn('btn-sync', 'cloud', 'Sincronización cifrada entre equipos', () => void openSync()),
         tbtn('btn-vault', 'lock', 'Bóveda', () => void vaultDialog()),
         tbtn('btn-settings', 'settings', 'Ajustes', () => void settingsDialog()),

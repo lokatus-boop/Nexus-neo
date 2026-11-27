@@ -130,6 +130,9 @@ export interface Settings {
   disclaimerAccepted: number;
   /** Sincronización cifrada de sesiones entre equipos. */
   sync: SyncSettings;
+  backupSchedule: BackupSchedule;
+  /** Carpeta de los respaldos de configuración (por defecto, dentro de los datos de la app). */
+  backupDir?: string;
 }
 
 export interface SecretEntry {
@@ -279,4 +282,109 @@ export interface SyncResult {
   devices: string[];
   /** Fecha del archivo remoto tras sincronizar. */
   time: number;
+}
+
+// ---------------------------------------------------------------------------
+// Despliegue masivo y respaldo de configuraciones de equipos de red
+
+export interface NetDevice {
+  id: string;
+  name: string;
+  host: string;
+  port?: number;
+  protocol: 'ssh' | 'telnet';
+  /** Sesión guardada de la que se toman usuario, clave, bastión y contraseña de la bóveda. */
+  sessionId?: string;
+  username?: string;
+  /** Perfil de fabricante (para los respaldos). */
+  vendor?: string;
+  /** Variables propias del equipo (columnas extra del CSV). */
+  vars?: Record<string, string>;
+}
+
+export interface DeployJob {
+  name: string;
+  devices: NetDevice[];
+  /** Órdenes (una por línea) con variables {{…}} y directivas !espera, !intro, !timeout, !enviar. */
+  commands: string;
+  /** Subida previa de un archivo (firmware, configuración…) por SFTP o SCP. */
+  upload?: { localPath: string; remotePath: string; method: 'sftp' | 'scp' };
+  /** Credenciales para los equipos que no vienen de una sesión guardada. */
+  credentials?: { username?: string; password?: string };
+  enablePassword?: string;
+  concurrency: number;
+  timeoutSec: number;
+  prompt?: string;
+  stopOnError: boolean;
+  /** Expresión regular que marca una orden como fallida. */
+  errorPattern?: string;
+  /** Acepta (y guarda) automáticamente las huellas SSH de equipos nuevos; nunca las cambiadas. */
+  acceptNewHostKeys: boolean;
+  /** Variables comunes a todos los equipos. */
+  vars?: Record<string, string>;
+}
+
+export type DeviceRunStatus = 'pending' | 'running' | 'ok' | 'error' | 'cancelled';
+
+export interface DeviceRunResult {
+  deviceId: string;
+  name: string;
+  host: string;
+  status: DeviceRunStatus;
+  message?: string;
+  output: string;
+  startedAt?: number;
+  endedAt?: number;
+  logFile?: string;
+  /** Sólo respaldos: archivo guardado y si cambió respecto al anterior. */
+  backupFile?: string;
+  changed?: boolean;
+}
+
+export interface JobProgress {
+  jobId: string;
+  kind: 'deploy' | 'backup';
+  name: string;
+  dir: string;
+  results: DeviceRunResult[];
+  done: boolean;
+}
+
+export interface BackupJob {
+  name: string;
+  devices: NetDevice[];
+  credentials?: { username?: string; password?: string };
+  enablePassword?: string;
+  concurrency: number;
+  timeoutSec: number;
+  prompt?: string;
+  acceptNewHostKeys: boolean;
+  /** Orden propia en lugar de la del perfil de fabricante. */
+  command?: string;
+}
+
+export interface BackupEntry {
+  device: string;
+  file: string;
+  time: number;
+  size: number;
+}
+
+/** Plantilla de configuración con variables {{…}} que se rellena por equipo. */
+export interface ConfigTemplate {
+  id: string;
+  name: string;
+  vendor?: string;
+  description?: string;
+  body: string;
+  updatedAt?: number;
+}
+
+/** Respaldo programado: equipos (sesiones guardadas) y cada cuántas horas. */
+export interface BackupSchedule {
+  enabled: boolean;
+  everyHours: number;
+  /** Ids de sesiones SSH/Telnet guardadas con su perfil de fabricante. */
+  devices: { sessionId: string; vendor: string }[];
+  lastRun?: number;
 }

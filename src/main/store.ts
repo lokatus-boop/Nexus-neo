@@ -2,7 +2,7 @@
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { Macro, ServerConfig, SessionConfig, Settings } from '../shared/types';
+import type { ConfigTemplate, Macro, ServerConfig, SessionConfig, Settings } from '../shared/types';
 
 export const DEFAULT_SETTINGS: Settings = {
   theme: 'nexus-dark',
@@ -24,6 +24,7 @@ export const DEFAULT_SETTINGS: Settings = {
   autoReconnect: true,
   disclaimerAccepted: 0,
   sync: { enabled: false, mode: 'folder', path: '', includeSecrets: false, intervalMin: 15, deviceName: '' },
+  backupSchedule: { enabled: false, everyHours: 24, devices: [] },
 };
 
 class JsonFile<T> {
@@ -56,6 +57,7 @@ class JsonFile<T> {
 export class Store {
   private sessions: JsonFile<SessionConfig[]>;
   private macros: JsonFile<Macro[]>;
+  private templates: JsonFile<ConfigTemplate[]>;
   private settings: JsonFile<Partial<Settings>>;
   private known: JsonFile<Record<string, string>>;
   private servers: JsonFile<ServerConfig[] | null>;
@@ -67,6 +69,7 @@ export class Store {
   constructor(readonly dir: string) {
     this.sessions = new JsonFile(join(dir, 'sessions.json'), () => []);
     this.macros = new JsonFile(join(dir, 'macros.json'), () => []);
+    this.templates = new JsonFile(join(dir, 'templates.json'), () => []);
     this.settings = new JsonFile(join(dir, 'settings.json'), () => ({}));
     this.known = new JsonFile(join(dir, 'known_hosts.json'), () => ({}));
     this.servers = new JsonFile(join(dir, 'servers.json'), () => null);
@@ -98,6 +101,31 @@ export class Store {
 
   async replaceMacros(list: Macro[]): Promise<void> {
     await this.macros.write(list);
+  }
+
+  async replaceTemplates(list: ConfigTemplate[]): Promise<void> {
+    await this.templates.write(list);
+  }
+
+  listTemplates(): Promise<ConfigTemplate[]> {
+    return this.templates.read();
+  }
+
+  async saveTemplate(t: ConfigTemplate): Promise<ConfigTemplate> {
+    const list = [...(await this.templates.read())];
+    const clean = { ...t, id: t.id || randomUUID(), updatedAt: Date.now() };
+    const i = list.findIndex((x) => x.id === clean.id);
+    if (i >= 0) list[i] = clean;
+    else list.push(clean);
+    await this.templates.write(list);
+    this.changed();
+    return clean;
+  }
+
+  async deleteTemplate(id: string): Promise<void> {
+    await this.templates.write((await this.templates.read()).filter((t) => t.id !== id));
+    await this.markDeleted('templates', id);
+    this.changed();
   }
 
   async init(): Promise<void> {

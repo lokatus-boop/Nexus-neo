@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import { startTestServer } from './helpers/ssh-server';
+import { startFakeSwitch } from './helpers/fake-switch';
 import { startFakeVnc } from './helpers/rfb-server';
 
 const shots = process.env.SHOTS_DIR || join(tmpdir(), 'nexus-shots');
@@ -157,6 +158,66 @@ async function main() {
   assert.ok(existsSync(join(syncDir, 'nexus-neo-sync.json')));
   assert.ok(!readFileSync(join(syncDir, 'nexus-neo-sync.json'), 'utf8').includes('Servidor de pruebas'), 'el archivo de sincronización debe ir cifrado');
   console.log('✔ sincronización cifrada');
+
+  // Operaciones de red contra un switch simulado: despliegue, plantilla y respaldo
+  const fsw = await startFakeSwitch('sw-ui');
+  const devCsv = `name,host,port,vendor,vlan\nsw-ui,127.0.0.1,${fsw.sshPort},cisco-ios,30`;
+  const fillConn = async (pane: string) => {
+    const p = page.locator(`#np-pane-${pane}`);
+    const d = p.locator('details.np-adv:has(summary:has-text("Credenciales"))');
+    await d.locator('summary').click();
+    await d.locator('.field:has-text("Usuario") input').fill('admin');
+    await d.locator('.field:has(> .field-label:text-is("Contraseña")) input').fill('switchpass');
+    await d.locator('.field:has-text("Contraseña de enable") input').fill('cisco');
+    await d.locator('label.check:has-text("Aceptar automáticamente") input').check();
+    await p.locator('.field:has-text("Más equipos (CSV)") textarea').fill(devCsv);
+  };
+  await page.click('#btn-netops');
+  await page.waitForSelector('#np-pane-deploy');
+  await fillConn('deploy');
+  await page.locator('#np-pane-deploy .field:has(> .field-label:text-is("Órdenes")) textarea').fill('configure terminal\nvlan {{vlan}}\n name usuarios\nend\nshow version');
+  await page.click('#np-run-deploy');
+  await page.waitForSelector('#np-pane-deploy #np-summary:has-text("Terminado: 1 correctos")', { timeout: 30000 });
+  await page.click('#np-pane-deploy tr[data-device="sw-ui"]');
+  await page.waitForSelector('#np-pane-deploy .np-output:has-text("Version 15.2")');
+  assert.ok(fsw.state.config.includes('vlan 30'), 'el despliegue debe aplicar la orden con la variable del CSV');
+  await page.evaluate(() => document.getElementById('toasts')?.remove());
+  await page.screenshot({ path: join(shots, '14-despliegue.png') });
+  console.log('✔ despliegue masivo');
+
+  await page.click('.np-tab:has-text("Plantillas")');
+  const tp = page.locator('#np-pane-templates');
+  await tp.locator('.field:has-text("Nombre") input').first().fill('Gestión acceso');
+  await tp.locator('.field:has(> .field-label:text-is("Plantilla")) textarea').fill('hostname {{name}}\ninterface Vlan{{vlan | 10}}\n ip address {{ip}} 255.255.255.0');
+  await tp.locator('.field:has-text("Valores por equipo") textarea').fill('name,host,ip\nsw-a,10.0.0.1,10.0.10.1\nsw-b,10.0.0.2,');
+  await page.waitForSelector('#np-tpl-preview:has-text("ip address 10.0.10.1")');
+  await tp.locator('.field:has-text("Vista previa de") select').selectOption({ label: 'sw-b' });
+  await page.waitForSelector('#np-tpl-preview:has-text("Faltan: ip")');
+  await page.click('#np-tpl-save');
+  await page.waitForSelector('#np-pane-templates .np-tpl.active:has-text("Gestión acceso")');
+  assert.ok(JSON.parse(readFileSync(join(dataDir, 'templates.json'), 'utf8')).some((t: { name: string }) => t.name === 'Gestión acceso'));
+  await page.evaluate(() => document.getElementById('toasts')?.remove());
+  await page.screenshot({ path: join(shots, '15-plantillas.png') });
+  console.log('✔ plantillas de configuración');
+
+  await page.click('.np-tab:has-text("Respaldos")');
+  await fillConn('backups');
+  await page.click('#np-run-backup');
+  await page.waitForSelector('#np-pane-backups #np-summary:has-text("Terminado: 1 correctos")', { timeout: 30000 });
+  await page.waitForSelector('#np-pane-backups .np-dev-backups .np-tpl:has-text("sw-ui")');
+  fsw.state.config.splice(4, 0, 'ip domain-name ui.local');
+  await page.click('#np-run-backup');
+  await page.waitForFunction(() => document.querySelector('#np-pane-backups #np-summary')?.textContent?.startsWith('Terminado') && document.querySelector('#np-pane-backups .np-dev-backups .np-tpl small')?.textContent?.startsWith('2 '), null, { timeout: 30000 });
+  await page.click('#np-pane-backups .np-dev-backups .np-tpl:has-text("sw-ui")');
+  await page.click('#np-compare');
+  await page.waitForSelector('.np-diff .np-add:has-text("ip domain-name ui.local")');
+  await page.evaluate(() => document.getElementById('toasts')?.remove());
+  await page.locator('.np-diff').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(shots, '16-respaldos.png') });
+  await page.click('.modal .modal-footer .btn:has-text("Cerrar")');
+  await page.waitForSelector('.modal', { state: 'detached' });
+  await fsw.close();
+  console.log('✔ respaldos de configuración');
 
   // Paleta
   await page.locator('.pane:not(.hidden) .xterm').click();

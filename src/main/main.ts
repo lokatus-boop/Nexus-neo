@@ -10,6 +10,7 @@ import { SshConnection, SshDeps, connectClient } from './protocols/ssh';
 import { VncBridge } from './vnc-bridge';
 import { RdpGateway } from './rdp/gateway';
 import { SyncManager } from './sync-manager';
+import { NetOps, SCHEDULE_SECRET, sessionDevice } from './netops/service';
 import { LocalConnection, detectShells } from './protocols/local';
 import { TelnetConnection } from './protocols/telnet';
 import { MoshConnection } from './protocols/mosh';
@@ -21,7 +22,7 @@ import { generateKey, installPublicKey, listKeys, sshDir, KeyType } from './keys
 import { checkKeyPermissions, importKeyFile, protectKeyFile } from './key-perms';
 import { ServerManager, defaultServers, listInterfaces } from './servers/manager';
 import { buildNexusExport, parseNexusExport, parseSshConfig } from './importers';
-import type { AuthPrompt, HostKeyPrompt, Macro, OpenRequest, SecretEntry, ServerConfig, SessionConfig, Settings, TunnelConfig } from '../shared/types';
+import type { AuthPrompt, BackupJob, ConfigTemplate, DeployJob, HostKeyPrompt, Macro, OpenRequest, SecretEntry, ServerConfig, SessionConfig, Settings, TunnelConfig } from '../shared/types';
 
 // ---------------------------------------------------------------------------
 // Directorio de datos: modo portable si existe un archivo "portable" junto al ejecutable.
@@ -35,6 +36,7 @@ function dataDir(): string {
 let store: Store;
 let vault: Vault;
 let sync: SyncManager;
+let netops: NetOps;
 let win: BrowserWindow | null = null;
 const conns = new Map<string, TerminalConnection>();
 const pending = new Map<string, (v: unknown) => void>();
@@ -463,6 +465,44 @@ function registerIpc(): void {
   });
   handle('logs:dir', async () => (await store.getSettings()).logDir || join(store.dir, 'logs'));
 
+  // --- Operaciones de red: despliegue masivo, plantillas y respaldos ------
+  handle('netops:vendors', () => netops.vendors());
+  handle('netops:deploy', (job: DeployJob) => netops.deploy(job));
+  handle('netops:backup', (job: BackupJob) => netops.backup(job));
+  handle('netops:cancel', (jobId: string) => netops.cancel(jobId));
+  handle('netops:deployDir', () => netops.deployDir);
+  handle('netops:backups', () => netops.listBackups());
+  handle('netops:deviceBackups', (device: string) => netops.deviceBackups(device));
+  handle('netops:readBackup', (file: string) => netops.readBackup(file));
+  handle('netops:pickUpload', async () => {
+    const r = await dialog.showOpenDialog(win!, { title: 'Archivo a subir (firmware, configuración…)', properties: ['openFile'] });
+    return r.canceled ? null : r.filePaths[0];
+  });
+  handle('netops:pickCsv', async () => {
+    const r = await dialog.showOpenDialog(win!, { title: 'Lista de equipos (CSV)', filters: [{ name: 'CSV', extensions: ['csv', 'txt'] }], properties: ['openFile'] });
+    return r.canceled || !r.filePaths[0] ? null : fs.readFile(r.filePaths[0], 'utf8');
+  });
+  handle('netops:sessionDevices', async () => (await store.listSessions()).filter((s) => (s.kind === 'ssh' || s.kind === 'telnet') && s.host).map(sessionDevice));
+  handle('templates:list', () => store.listTemplates());
+  handle('templates:save', (t: ConfigTemplate) => store.saveTemplate(t));
+  handle('templates:delete', (id: string) => store.deleteTemplate(id));
+  handle('templates:export', async (t: ConfigTemplate, csv: string) => {
+    const r = await dialog.showOpenDialog(win!, { title: 'Carpeta donde guardar las configuraciones', properties: ['openDirectory', 'createDirectory'] });
+    if (r.canceled || !r.filePaths[0]) return null;
+    return { dir: r.filePaths[0], ...(await netops.exportTemplate(t, csv, r.filePaths[0])) };
+  });
+  handle('backups:schedule', async (sched: Settings['backupSchedule'], cred?: { password?: string; enablePassword?: string } | null) => {
+    if (cred && (cred.password || cred.enablePassword)) {
+      if (!vault.isUnlocked()) throw new Error('Desbloquea la bóveda para guardar las contraseñas de los respaldos programados.');
+      await vault.set(SCHEDULE_SECRET, { password: cred.password || undefined, passphrase: cred.enablePassword || undefined });
+    }
+    const prev = (await store.getSettings()).backupSchedule;
+    await store.saveSettings({ backupSchedule: { ...sched, lastRun: prev.lastRun } });
+    await netops.schedule();
+    return (await store.getSettings()).backupSchedule;
+  });
+  handle('backups:runScheduled', () => netops.tick(true));
+
   // --- Sincronización ----------------------------------------------------
   handle('sync:status', () => sync.getStatus());
   handle('sync:configure', async (cfg: Settings['sync'], passphrase?: string | null) => {
@@ -624,6 +664,7 @@ app.whenReady().then(async () => {
     collections: [
       { name: 'sessions', list: () => store.listSessions(), replace: (l) => store.replaceSessions(l as SessionConfig[]) },
       { name: 'macros', list: () => store.listMacros(), replace: (l) => store.replaceMacros(l as Macro[]) },
+      { name: 'templates', list: () => store.listTemplates(), replace: (l) => store.replaceTemplates(l as ConfigTemplate[]) },
     ],
     openSftp: async (sessionId) => {
       const sessions = await store.listSessions();
@@ -637,13 +678,22 @@ app.whenReady().then(async () => {
   store.onChange = () => sync.localChanged();
   sync.on('applied', (stats: { added: number; updated: number; removed: number }) => send('sync:applied', stats));
   sync.on('status', (st) => send('sync:status', st));
+  netops = new NetOps({
+    store,
+    vault,
+    confirmHostKey: (p) => ask<boolean>('prompt:hostKey', { connId: 'netops', ...p }),
+    progress: (p) => send('netops:progress', p),
+    notify: (msg, kind) => send('app:toast', msg, kind),
+  });
   registerIpc();
   createWindow();
+  await netops.schedule();
   await sync.schedule();
   setTimeout(() => void sync.run(true), 4000).unref();
 });
 
 app.on('window-all-closed', () => {
   sync?.stop();
+  netops?.stop();
   void Promise.all([servers.stopAll(), rdpGateway.stop()]).finally(() => app.quit());
 });
