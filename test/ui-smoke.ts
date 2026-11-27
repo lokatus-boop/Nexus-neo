@@ -219,6 +219,31 @@ async function main() {
   await page.locator('.modal .btn.primary:has-text("Cerrar")').click();
   console.log('✔ claves SSH');
 
+  // Mosh (arranca mosh-server a través del servidor SSH de pruebas), si está instalado.
+  let hasMosh = true;
+  try {
+    (await import('node:child_process')).execFileSync('mosh-server', ['--version'], { stdio: 'ignore' });
+  } catch {
+    hasMosh = false;
+  }
+  if (hasMosh) {
+    await page.locator('#quick-connect').fill(`mosh://nexus@127.0.0.1:${srv.port}`);
+    await page.locator('#quick-connect').press('Enter');
+    await page.waitForSelector('.modal:has-text("Contraseña para")');
+    await page.locator('.modal input[type=password]').fill('secreto');
+    await page.click('.modal .btn.primary');
+    await page.waitForSelector('.tab.active[data-state="connected"]:has-text("mosh://")', { timeout: 20000 });
+    await page.locator('.pane.focused .xterm').click();
+    await page.keyboard.type('echo MOSH_$((6*7))\n');
+    await page.waitForFunction(() => document.querySelector('.pane.focused .xterm-rows')?.textContent?.includes('MOSH_42'), null, { timeout: 15000 });
+    await page.evaluate(() => document.getElementById('toasts')?.remove());
+    await page.screenshot({ path: join(shots, '12-mosh.png') });
+    await page.keyboard.press('Control+Shift+W');
+    const closeBtn = page.locator('.modal .btn.danger:has-text("Cerrar")');
+    if (await closeBtn.count()) await closeBtn.click();
+    console.log('✔ Mosh');
+  } else console.log('… Mosh: mosh-server no está instalado');
+
   // Visor VNC integrado
   const vnc = await startFakeVnc();
   const qc = page.locator('#quick-connect');

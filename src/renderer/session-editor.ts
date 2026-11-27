@@ -5,7 +5,7 @@ import { DEFAULT_PORTS } from './quick-connect';
 import { ensureKeyPermissions } from './keys-dialog';
 import type { Macro, SessionConfig, SessionKind, TunnelConfig, VaultStatus } from '../shared/types';
 
-const KIND_LABEL: Record<SessionKind, string> = { ssh: 'SSH', local: 'Terminal local', telnet: 'Telnet', serial: 'Serie', rdp: 'RDP', vnc: 'VNC' };
+const KIND_LABEL: Record<SessionKind, string> = { ssh: 'SSH', mosh: 'Mosh (SSH móvil)', local: 'Terminal local', telnet: 'Telnet', serial: 'Serie', rdp: 'RDP', vnc: 'VNC' };
 
 export interface EditorContext {
   sessions: SessionConfig[];
@@ -131,6 +131,13 @@ export async function editSession(initial: Partial<SessionConfig>, ctx: EditorCo
   const vncExternal = checkbox('Abrir con el cliente VNC del sistema en lugar del visor integrado', !!s.vncExternal);
   const vncTunnel = select([['', '— Conexión directa —'], ...ctx.sessions.filter((x) => x.kind === 'ssh').map((x) => [x.id, `${x.name} (${x.host})`] as [string, string])], s.kind === 'vnc' ? s.jumpSessionId || '' : '');
 
+  // --- Mosh ---
+  const moshPorts = input({ value: s.moshPorts || '', placeholder: '60000:61000 (por defecto)' });
+  const moshCommand = input({ value: s.moshCommand || '', placeholder: 'Shell por defecto (o p. ej. tmux new -A -s main)' });
+  const moshServer = input({ value: s.moshServer || '', placeholder: 'mosh-server' });
+  const moshLocale = input({ value: s.moshLocale || '', placeholder: 'C.UTF-8' });
+  const moshHost = input({ value: s.moshHost || '', placeholder: 'El mismo que SSH' });
+
   const sections = {
     net: el('fieldset', {}, el('legend', {}, 'Conexión'), el('div', { class: 'grid3' }, field('Host', host), field('Puerto', port), field('Usuario', username))),
     ssh: el('fieldset', {}, el('legend', {}, 'Autenticación SSH'),
@@ -151,6 +158,10 @@ export async function editSession(initial: Partial<SessionConfig>, ctx: EditorCo
     vnc: el('fieldset', {}, el('legend', {}, 'VNC'),
       field('Túnel a través de la sesión SSH', vncTunnel, 'Conecta al VNC a través de un servidor SSH (p. ej. host 127.0.0.1 si el VNC escucha sólo en local).'),
       vncExternal.wrap),
+    mosh: el('fieldset', {}, el('legend', {}, 'Mosh'),
+      el('div', { class: 'grid2' }, field('Puertos UDP', moshPorts), field('Orden remota', moshCommand)),
+      el('div', { class: 'grid3' }, field('mosh-server', moshServer), field('Locale', moshLocale), field('Dirección UDP', moshHost)),
+      el('small', { class: 'hint' }, 'Mosh entra por SSH (con la autenticación de arriba), arranca mosh-server y sigue por UDP cifrado: la sesión sobrevive a cambios de red, suspensiones y cortes. El servidor necesita el paquete «mosh» y los puertos UDP abiertos.')),
     rdp: el('fieldset', {}, el('legend', {}, 'Escritorio remoto (RDP)'),
       el('div', { class: 'grid2' }, field('Contraseña', rdpPassword), el('div', {})),
       el('div', { class: 'grid3' }, field('Dominio', rdpDomain), field('Resolución', rdpRes), el('div', {}, rdpFull.wrap)),
@@ -161,8 +172,10 @@ export async function editSession(initial: Partial<SessionConfig>, ctx: EditorCo
 
   const update = () => {
     const k = kind.value as SessionKind;
-    sections.net.style.display = ['ssh', 'telnet', 'rdp', 'vnc'].includes(k) ? '' : 'none';
-    sections.ssh.style.display = sections.sshOpts.style.display = sections.tunnels.style.display = k === 'ssh' ? '' : 'none';
+    sections.net.style.display = ['ssh', 'mosh', 'telnet', 'rdp', 'vnc'].includes(k) ? '' : 'none';
+    sections.ssh.style.display = k === 'ssh' || k === 'mosh' ? '' : 'none';
+    sections.sshOpts.style.display = sections.tunnels.style.display = k === 'ssh' ? '' : 'none';
+    sections.mosh.style.display = k === 'mosh' ? '' : 'none';
     sections.local.style.display = k === 'local' ? '' : 'none';
     sections.serial.style.display = k === 'serial' ? '' : 'none';
     sections.rdp.style.display = k === 'rdp' ? '' : 'none';
@@ -180,7 +193,7 @@ export async function editSession(initial: Partial<SessionConfig>, ctx: EditorCo
 
   const body = el('div', { class: 'session-form' },
     el('div', { class: 'grid3' }, field('Tipo', kind), field('Nombre', name), field('Carpeta', folder)), folderList,
-    sections.net, sections.ssh, sections.sshOpts, sections.tunnels, sections.local, sections.serial, sections.rdp, sections.vnc,
+    sections.net, sections.ssh, sections.mosh, sections.sshOpts, sections.tunnels, sections.local, sections.serial, sections.rdp, sections.vnc,
     el('div', { class: 'row' }, useColor.wrap, color),
     logSession.wrap,
     field('Notas', notes),
@@ -194,7 +207,7 @@ export async function editSession(initial: Partial<SessionConfig>, ctx: EditorCo
       kind: 'primary',
       value: async () => {
         const k = kind.value as SessionKind;
-        const needsHost = ['ssh', 'telnet', 'rdp', 'vnc'].includes(k);
+        const needsHost = ['ssh', 'mosh', 'telnet', 'rdp', 'vnc'].includes(k);
         if (needsHost && !host.value.trim()) throw new Error('Indica el host.');
         if (k === 'serial' && !serialPath.value.trim()) throw new Error('Indica el puerto serie.');
         for (const t of tunnels) {
@@ -214,7 +227,7 @@ export async function editSession(initial: Partial<SessionConfig>, ctx: EditorCo
           out.port = Number(port.value) || DEFAULT_PORTS[k];
           if (k !== 'vnc') out.username = username.value.trim() || undefined;
         }
-        if (k === 'ssh' && auth.value === 'key' && keyPath.value.trim() && keyPath.value.trim() !== checkedKeyPath) {
+        if ((k === 'ssh' || k === 'mosh') && auth.value === 'key' && keyPath.value.trim() && keyPath.value.trim() !== checkedKeyPath) {
           keyPath.value = checkedKeyPath = await ensureKeyPermissions(keyPath.value.trim());
         }
         if (k === 'ssh') {
@@ -228,6 +241,20 @@ export async function editSession(initial: Partial<SessionConfig>, ctx: EditorCo
             term: term.value.trim() || 'xterm-256color',
             startupMacroId: macro.value || undefined,
             tunnels,
+          });
+        }
+        if (k === 'mosh') {
+          if (moshPorts.value.trim() && !/^\d{1,5}(:\d{1,5})?$/.test(moshPorts.value.trim())) throw new Error('Los puertos de Mosh deben ser un número o un rango (60000:60100).');
+          Object.assign(out, {
+            auth: auth.value,
+            keyPath: auth.value === 'key' ? keyPath.value.trim() || undefined : undefined,
+            jumpSessionId: jump.value || undefined,
+            startupMacroId: macro.value || undefined,
+            moshPorts: moshPorts.value.trim() || undefined,
+            moshCommand: moshCommand.value.trim() || undefined,
+            moshServer: moshServer.value.trim() || undefined,
+            moshLocale: moshLocale.value.trim() || undefined,
+            moshHost: moshHost.value.trim() || undefined,
           });
         }
         if (k === 'local') Object.assign(out, { shell: shellSel.value || undefined, cwd: cwd.value.trim() || undefined });

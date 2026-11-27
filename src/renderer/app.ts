@@ -771,7 +771,7 @@ function renderWelcome(): void {
     el('div', { class: 'welcome-inner' },
       el('div', { class: 'logo-big' }, logo(64), el('div', {}, el('h1', {}, 'Nexus Neo'), el('p', {}, 'Tu centro de acceso remoto: SSH, SFTP, Telnet, serie, túneles y más.'))),
       el('div', { class: 'welcome-actions' },
-        el('button', { class: 'card-btn', onclick: () => void newSession() }, icon('plus', 22), el('strong', {}, 'Nueva sesión'), el('small', {}, 'SSH, Telnet, serie, RDP, VNC…')),
+        el('button', { class: 'card-btn', onclick: () => void newSession() }, icon('plus', 22), el('strong', {}, 'Nueva sesión'), el('small', {}, 'SSH, Mosh, Telnet, serie, RDP, VNC…')),
         el('button', { class: 'card-btn', onclick: () => void openLocal() }, icon('terminal', 22), el('strong', {}, 'Terminal local'), el('small', {}, 'Ctrl+Mayús+T')),
         el('button', { class: 'card-btn', onclick: () => void importSessions('ssh-config') }, icon('import', 22), el('strong', {}, 'Importar ~/.ssh/config'), el('small', {}, 'Trae tus hosts existentes')),
         el('button', { class: 'card-btn', onclick: () => void palette() }, icon('search', 22), el('strong', {}, 'Ir a…'), el('small', {}, 'Ctrl+Mayús+K')),

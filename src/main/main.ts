@@ -11,6 +11,7 @@ import { VncBridge } from './vnc-bridge';
 import { RdpGateway } from './rdp/gateway';
 import { LocalConnection, detectShells } from './protocols/local';
 import { TelnetConnection } from './protocols/telnet';
+import { MoshConnection } from './protocols/mosh';
 import { SerialConnection, listSerialPorts } from './protocols/serial';
 import { launchExternal } from './protocols/external';
 import * as sftpOps from './sftp-ops';
@@ -282,6 +283,9 @@ function registerIpc(): void {
     switch (cfg.kind) {
       case 'ssh':
         conn = new SshConnection(cfg, sshDeps(connId, sessionsSnapshot), connId);
+        break;
+      case 'mosh':
+        conn = new MoshConnection(cfg, sshDeps(connId, sessionsSnapshot));
         break;
       case 'local':
         conn = new LocalConnection(cfg, settings.defaultLocalShell);

@@ -1,6 +1,6 @@
 // Tipos compartidos entre el proceso principal, el preload y la interfaz.
 
-export type SessionKind = 'ssh' | 'local' | 'telnet' | 'serial' | 'rdp' | 'vnc';
+export type SessionKind = 'ssh' | 'mosh' | 'local' | 'telnet' | 'serial' | 'rdp' | 'vnc';
 
 export type TunnelType = 'local' | 'remote' | 'dynamic';
 
@@ -49,6 +49,18 @@ export interface SessionConfig {
   startupMacroId?: string;
   /** Terminal remoto solicitado (TERM). */
   term?: string;
+
+  // Mosh (usa también los campos de autenticación SSH)
+  /** Ruta o nombre de mosh-server en el servidor. */
+  moshServer?: string;
+  /** Puerto o rango UDP para mosh-server, p. ej. "60000:60100". */
+  moshPorts?: string;
+  /** Orden a ejecutar en lugar del shell (p. ej. "tmux new -A -s main"). */
+  moshCommand?: string;
+  /** Locale UTF-8 para mosh-server (por defecto C.UTF-8). */
+  moshLocale?: string;
+  /** Host o IP para el UDP si difiere del de SSH. */
+  moshHost?: string;
 
   // Local
   shell?: string;
