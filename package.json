@@ -1,7 +1,7 @@
 {
   "name": "nexus-neo",
-  "version": "0.1.2",
-  "description": "Cliente de acceso remoto multiplataforma: SSH, SFTP, Telnet, serie, túneles, X11, multi-ejecución y macros.",
+  "version": "0.2.0",
+  "description": "Cliente de acceso remoto multiplataforma: SSH, SFTP, Telnet, Mosh, RDP, VNC, serie, túneles, X11, despliegue masivo y respaldos de equipos de red.",
   "main": "dist/main.js",
   "scripts": {
     "build": "node scripts/build.mjs",
@@ -68,7 +68,7 @@
       ],
       "category": "Network",
       "icon": "build/icons",
-      "synopsis": "Cliente de acceso remoto: SSH, SFTP, Telnet, serie, túneles, VNC",
+      "synopsis": "Cliente de acceso remoto: SSH, SFTP, Telnet, Mosh, RDP, VNC, serie y túneles",
       "syncDesktopName": true
     },
     "win": {

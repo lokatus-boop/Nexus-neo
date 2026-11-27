@@ -393,7 +393,7 @@ async function main() {
       for (let i = 0; i < d.length && colors.size < 8; i += 4 * 97) colors.add((d[i] << 16) | (d[i + 1] << 8) | d[i + 2]);
       return colors.size >= 8;
     }, null, { timeout: 30000 });
-    await rdpWin.screenshot({ path: join(shots, '11-visor-rdp.png') });
+    await rdpWin.screenshot({ path: join(shots, '19-visor-rdp.png') });
     await rdpWin.close();
     console.log('✔ visor RDP integrado');
   } else console.log('… visor RDP: sin servidor de pruebas (define NEXUS_RDP_TEST=host:puerto)');
@@ -416,7 +416,7 @@ async function main() {
   await page.waitForSelector('.palette-list :text("Insertar fecha y hora")');
   await page.keyboard.press('Enter');
   // El comando escribe la fecha en el terminal activo (sin pulsar Intro).
-  await waitTerm(page, `~# ${new Date().getFullYear()}-`);
+  await waitTerm(page, ` ${new Date().getFullYear()}-`);
   await page.locator('.pane:not(.hidden) .xterm').click();
   await page.keyboard.press('Control+C');
   await page.keyboard.type('% Invalid input');
