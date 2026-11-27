@@ -8,8 +8,14 @@ import { Vault } from './vault';
 import { TerminalConnection, Prompter } from './protocols/base';
 import { SshConnection, SshDeps, connectClient } from './protocols/ssh';
 import { VncBridge } from './vnc-bridge';
+import { RdpGateway } from './rdp/gateway';
+import { SyncManager } from './sync-manager';
+import { NetOps, SCHEDULE_SECRET, sessionDevice } from './netops/service';
+import { PluginManager } from './plugins';
+import { normalizeTheme, exportTheme, slug } from '../shared/theme-format';
 import { LocalConnection, detectShells } from './protocols/local';
 import { TelnetConnection } from './protocols/telnet';
+import { MoshConnection } from './protocols/mosh';
 import { SerialConnection, listSerialPorts } from './protocols/serial';
 import { launchExternal } from './protocols/external';
 import * as sftpOps from './sftp-ops';
@@ -18,7 +24,7 @@ import { generateKey, installPublicKey, listKeys, sshDir, KeyType } from './keys
 import { checkKeyPermissions, importKeyFile, protectKeyFile } from './key-perms';
 import { ServerManager, defaultServers, listInterfaces } from './servers/manager';
 import { buildNexusExport, parseNexusExport, parseSshConfig } from './importers';
-import type { AuthPrompt, HostKeyPrompt, Macro, OpenRequest, SecretEntry, ServerConfig, SessionConfig, Settings, TunnelConfig } from '../shared/types';
+import type { AuthPrompt, BackupJob, ConfigTemplate, PluginPermission, ThemeDef, DeployJob, HostKeyPrompt, Macro, OpenRequest, SecretEntry, ServerConfig, SessionConfig, Settings, TunnelConfig } from '../shared/types';
 
 // ---------------------------------------------------------------------------
 // Directorio de datos: modo portable si existe un archivo "portable" junto al ejecutable.
@@ -31,6 +37,9 @@ function dataDir(): string {
 
 let store: Store;
 let vault: Vault;
+let sync: SyncManager;
+let netops: NetOps;
+let plugins: PluginManager;
 let win: BrowserWindow | null = null;
 const conns = new Map<string, TerminalConnection>();
 const pending = new Map<string, (v: unknown) => void>();
@@ -88,6 +97,49 @@ function openVncWindow(cfg: SessionConfig): void {
   w.on('closed', () => {
     vncWindows.get(id)?.bridge?.close();
     vncWindows.delete(id);
+  });
+}
+
+// --- Visor RDP integrado -----------------------------------------------------
+// IronRDP (WebAssembly) dibuja el escritorio en una ventana propia y habla con el servidor a
+// través de la pasarela RDCleanPath local, que hace el TCP/TLS (o el túnel SSH).
+const rdpGateway = new RdpGateway();
+const rdpWindows = new Map<string, { cfg: SessionConfig; win: BrowserWindow; token?: string; ssh?: import('ssh2').Client }>();
+
+/** Pregunta algo a una ventana concreta y espera su respuesta por prompt:reply. */
+function askWindow<T>(w: BrowserWindow, channel: string, payload: unknown): Promise<T> {
+  return new Promise((resolve) => {
+    const id = randomUUID();
+    pending.set(id, resolve as (v: unknown) => void);
+    if (w.isDestroyed()) return resolve(false as T);
+    w.webContents.send(channel, id, payload);
+    w.once('closed', () => {
+      if (pending.delete(id)) resolve(false as T);
+    });
+  });
+}
+
+function openRdpWindow(cfg: SessionConfig): void {
+  const id = randomUUID();
+  const [w0, h0] = (cfg.rdpResolution || '').split('x').map(Number);
+  const w = new BrowserWindow({
+    width: w0 > 0 ? Math.min(w0 + 16, 3840) : 1366,
+    height: h0 > 0 ? Math.min(h0 + 60, 2160) : 860,
+    backgroundColor: '#0b0f14',
+    title: `${cfg.name} — RDP · Nexus Neo`,
+    icon: windowIcon(),
+    autoHideMenuBar: true,
+    fullscreen: !!cfg.rdpFullscreen,
+    webPreferences: { preload: join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true },
+  });
+  w.setMenu(null);
+  rdpWindows.set(id, { cfg, win: w });
+  void w.loadFile(join(__dirname, 'renderer/rdp.html'), { query: { id } });
+  w.on('closed', () => {
+    const e = rdpWindows.get(id);
+    if (e?.token) rdpGateway.revoke(e.token);
+    e?.ssh?.end();
+    rdpWindows.delete(id);
   });
 }
 
@@ -213,7 +265,10 @@ function registerIpc(): void {
   // --- Bóveda --------------------------------------------------------------
   handle('vault:status', async () => ({ exists: await vault.exists(), unlocked: vault.isUnlocked() }));
   handle('vault:create', (pw: string) => vault.create(pw));
-  handle('vault:unlock', (pw: string) => vault.unlock(pw));
+  handle('vault:unlock', async (pw: string) => {
+    await vault.unlock(pw);
+    void sync.run(true);
+  });
   handle('vault:lock', () => vault.lock());
   handle('vault:change', (oldPw: string, newPw: string) => vault.changePassword(oldPw, newPw));
 
@@ -225,6 +280,10 @@ function registerIpc(): void {
       openVncWindow(cfg);
       return;
     }
+    if (cfg.kind === 'rdp' && !cfg.rdpExternal && !settings.rdpClient) {
+      openRdpWindow(cfg);
+      return;
+    }
     if (cfg.kind === 'rdp' || cfg.kind === 'vnc') {
       await launchExternal(cfg, settings);
       return;
@@ -234,6 +293,9 @@ function registerIpc(): void {
     switch (cfg.kind) {
       case 'ssh':
         conn = new SshConnection(cfg, sshDeps(connId, sessionsSnapshot), connId);
+        break;
+      case 'mosh':
+        conn = new MoshConnection(cfg, sshDeps(connId, sessionsSnapshot));
         break;
       case 'local':
         conn = new LocalConnection(cfg, settings.defaultLocalShell);
@@ -406,6 +468,164 @@ function registerIpc(): void {
   });
   handle('logs:dir', async () => (await store.getSettings()).logDir || join(store.dir, 'logs'));
 
+  // --- Operaciones de red: despliegue masivo, plantillas y respaldos ------
+  handle('netops:vendors', () => netops.vendors());
+  handle('netops:deploy', (job: DeployJob) => netops.deploy(job));
+  handle('netops:backup', (job: BackupJob) => netops.backup(job));
+  handle('netops:cancel', (jobId: string) => netops.cancel(jobId));
+  handle('netops:deployDir', () => netops.deployDir);
+  handle('netops:backups', () => netops.listBackups());
+  handle('netops:deviceBackups', (device: string) => netops.deviceBackups(device));
+  handle('netops:readBackup', (file: string) => netops.readBackup(file));
+  handle('netops:pickUpload', async () => {
+    const r = await dialog.showOpenDialog(win!, { title: 'Archivo a subir (firmware, configuración…)', properties: ['openFile'] });
+    return r.canceled ? null : r.filePaths[0];
+  });
+  handle('netops:pickCsv', async () => {
+    const r = await dialog.showOpenDialog(win!, { title: 'Lista de equipos (CSV)', filters: [{ name: 'CSV', extensions: ['csv', 'txt'] }], properties: ['openFile'] });
+    return r.canceled || !r.filePaths[0] ? null : fs.readFile(r.filePaths[0], 'utf8');
+  });
+  handle('netops:sessionDevices', async () => (await store.listSessions()).filter((s) => (s.kind === 'ssh' || s.kind === 'telnet') && s.host).map(sessionDevice));
+  handle('templates:list', () => store.listTemplates());
+  handle('templates:save', (t: ConfigTemplate) => store.saveTemplate(t));
+  handle('templates:delete', (id: string) => store.deleteTemplate(id));
+  handle('templates:export', async (t: ConfigTemplate, csv: string) => {
+    const r = await dialog.showOpenDialog(win!, { title: 'Carpeta donde guardar las configuraciones', properties: ['openDirectory', 'createDirectory'] });
+    if (r.canceled || !r.filePaths[0]) return null;
+    return { dir: r.filePaths[0], ...(await netops.exportTemplate(t, csv, r.filePaths[0])) };
+  });
+  handle('backups:schedule', async (sched: Settings['backupSchedule'], cred?: { password?: string; enablePassword?: string } | null) => {
+    if (cred && (cred.password || cred.enablePassword)) {
+      if (!vault.isUnlocked()) throw new Error('Desbloquea la bóveda para guardar las contraseñas de los respaldos programados.');
+      await vault.set(SCHEDULE_SECRET, { password: cred.password || undefined, passphrase: cred.enablePassword || undefined });
+    }
+    const prev = (await store.getSettings()).backupSchedule;
+    await store.saveSettings({ backupSchedule: { ...sched, lastRun: prev.lastRun } });
+    await netops.schedule();
+    return (await store.getSettings()).backupSchedule;
+  });
+  handle('backups:runScheduled', () => netops.tick(true));
+
+  // --- Temas personalizados ----------------------------------------------
+  handle('themes:list', () => store.listThemes());
+  handle('themes:save', (t: ThemeDef) => store.saveTheme(normalizeTheme(t)));
+  handle('themes:delete', (id: string) => store.deleteTheme(id));
+  handle('themes:pickFile', async () => {
+    const r = await dialog.showOpenDialog(win!, { title: 'Importar tema', filters: [{ name: 'Temas (Nexus Neo, Windows Terminal, iTerm2)', extensions: ['json', 'itermcolors'] }, { name: 'Todos', extensions: ['*'] }], properties: ['openFile'] });
+    if (r.canceled || !r.filePaths[0]) return null;
+    const st = await fs.stat(r.filePaths[0]);
+    if (st.size > 2 * 1024 * 1024) throw new Error('El archivo es demasiado grande para ser un tema.');
+    return { name: r.filePaths[0], text: await fs.readFile(r.filePaths[0], 'utf8') };
+  });
+  handle('themes:export', async (t: ThemeDef) => {
+    const r = await dialog.showSaveDialog(win!, { title: 'Exportar tema', defaultPath: join(homedir(), `${slug(t.name)}.nexus-theme.json`), filters: [{ name: 'Tema de Nexus Neo', extensions: ['json'] }] });
+    if (r.canceled || !r.filePath) return null;
+    await fs.writeFile(r.filePath, exportTheme(normalizeTheme(t)));
+    return r.filePath;
+  });
+
+  // --- Plugins -------------------------------------------------------------
+  handle('plugins:list', async () => plugins.list(await store.getSettings()));
+  handle('plugins:code', async (id: string) => plugins.code(id, await store.getSettings()));
+  handle('plugins:enable', async (id: string, permissions: PluginPermission[]) => {
+    const s = await store.getSettings();
+    await store.saveSettings({ plugins: { ...s.plugins, [id]: { permissions } } });
+  });
+  handle('plugins:disable', async (id: string) => {
+    const { [id]: _off, ...rest } = (await store.getSettings()).plugins;
+    await store.saveSettings({ plugins: rest });
+  });
+  handle('plugins:install', async () => {
+    const r = await dialog.showOpenDialog(win!, { title: 'Carpeta del plugin (con manifest.json)', properties: ['openDirectory'] });
+    if (r.canceled || !r.filePaths[0]) return null;
+    return plugins.install(r.filePaths[0]);
+  });
+  handle('plugins:remove', async (id: string) => {
+    const { [id]: _off, ...rest } = (await store.getSettings()).plugins;
+    await store.saveSettings({ plugins: rest });
+    await plugins.remove(id);
+  });
+  handle('plugins:openDir', async () => {
+    await fs.mkdir(plugins.dir, { recursive: true });
+    return shell.openPath(plugins.dir);
+  });
+  handle('plugins:storageGet', (id: string, key: string) => plugins.storageGet(id, key));
+  handle('plugins:storageSet', (id: string, key: string, value: unknown) => plugins.storageSet(id, key, value));
+
+  // --- Sincronización ----------------------------------------------------
+  handle('sync:status', () => sync.getStatus());
+  handle('sync:configure', async (cfg: Settings['sync'], passphrase?: string | null) => {
+    if (cfg.enabled && !cfg.path.trim()) throw new Error(cfg.mode === 'folder' ? 'Elige la carpeta de sincronización.' : 'Indica la ruta remota.');
+    if (cfg.enabled && cfg.mode === 'sftp' && !cfg.sessionId) throw new Error('Elige la sesión SSH del servidor.');
+    if (passphrase !== undefined) await sync.setPassphrase(passphrase);
+    await store.saveSettings({ sync: { ...cfg, path: cfg.path.trim(), intervalMin: Math.max(0, Number(cfg.intervalMin) || 0) } });
+    await sync.schedule();
+    return sync.getStatus();
+  });
+  handle('sync:run', () => sync.run(false));
+
+  // --- RDP ---------------------------------------------------------------
+  ipcMain.handle('rdp:prepare', async (_e, id: string) => {
+    const entry = rdpWindows.get(id);
+    if (!entry) throw new Error('Sesión RDP desconocida');
+    const { cfg, win: w } = entry;
+    const host = cfg.host || 'localhost';
+    const port = cfg.port || 3389;
+    await rdpGateway.start();
+    let via = '';
+    let openTransport: (() => Promise<import('node:stream').Duplex>) | undefined;
+    if (cfg.jumpSessionId) {
+      const sessions = await store.listSessions();
+      const jump = sessions.find((s) => s.id === cfg.jumpSessionId);
+      if (!jump) throw new Error('La sesión SSH del túnel no existe.');
+      via = ` a través de ${jump.name}`;
+      openTransport = async () => {
+        entry.ssh?.end();
+        const ssh = await connectClient(jump, sshDeps(`rdp-${id}`, sessions));
+        entry.ssh = ssh;
+        return new Promise((resolve, reject) =>
+          ssh.forwardOut('127.0.0.1', 0, host, port, (err, ch) => (err ? reject(err) : resolve(ch))));
+      };
+    }
+    if (entry.token) rdpGateway.revoke(entry.token);
+    const { url, token } = rdpGateway.issue({
+      host,
+      port,
+      openTransport,
+      verifyCertificate: async (c) => {
+        const kid = `rdp:[${c.host}]:${c.port}`;
+        const known = store.knownHost(kid);
+        if (known === c.fingerprint) return true;
+        const ok = await askWindow<boolean>(w, 'rdp:cert', { ...c, previous: known });
+        if (ok) await store.setKnownHost(kid, c.fingerprint);
+        return ok;
+      },
+    });
+    entry.token = token;
+    const secret = vault.isUnlocked() ? vault.get(cfg.id) : undefined;
+    const [width, height] = (cfg.rdpResolution || '').split('x').map(Number);
+    return {
+      name: cfg.name,
+      target: `${host}:${port}${via}`,
+      destination: `${host}:${port}`,
+      url,
+      token,
+      username: cfg.username || '',
+      domain: cfg.rdpDomain || '',
+      password: secret?.password ?? null,
+      canSave: vault.isUnlocked() && !cfg.id.startsWith('quick-'),
+      width: width > 0 ? width : 0,
+      height: height > 0 ? height : 0,
+    };
+  });
+  ipcMain.handle('rdp:savePassword', async (_e, id: string, password: string) => {
+    const entry = rdpWindows.get(id);
+    if (!entry || !vault.isUnlocked()) return false;
+    await vault.set(entry.cfg.id, { ...(vault.get(entry.cfg.id) || {}), password });
+    return true;
+  });
+  ipcMain.on('rdp:activity', () => (lastActivity = Date.now()));
+
   // --- VNC ---------------------------------------------------------------
   ipcMain.handle('vnc:connect', async (e, id: string) => {
     const entry = vncWindows.get(id);
@@ -487,10 +707,44 @@ app.whenReady().then(async () => {
   store = new Store(dataDir());
   await store.init();
   vault = new Vault(join(store.dir, 'vault.json'));
+  sync = new SyncManager({
+    store,
+    vault,
+    collections: [
+      { name: 'sessions', list: () => store.listSessions(), replace: (l) => store.replaceSessions(l as SessionConfig[]) },
+      { name: 'macros', list: () => store.listMacros(), replace: (l) => store.replaceMacros(l as Macro[]) },
+      { name: 'templates', list: () => store.listTemplates(), replace: (l) => store.replaceTemplates(l as ConfigTemplate[]) },
+      { name: 'themes', list: () => store.listThemes(), replace: (l) => store.replaceThemes(l as ThemeDef[]) },
+    ],
+    openSftp: async (sessionId) => {
+      const sessions = await store.listSessions();
+      const cfg = sessions.find((x) => x.id === sessionId);
+      if (!cfg) throw new Error('La sesión SSH de sincronización no existe.');
+      const client = await connectClient(cfg, sshDeps('sync', sessions));
+      const sftp = await new Promise<import('ssh2').SFTPWrapper>((resolve, reject) => client.sftp((e, x) => (e ? reject(e) : resolve(x))));
+      return { sftp, close: () => client.end(), label: cfg.name };
+    },
+  });
+  store.onChange = () => sync.localChanged();
+  sync.on('applied', (stats: { added: number; updated: number; removed: number }) => send('sync:applied', stats));
+  sync.on('status', (st) => send('sync:status', st));
+  plugins = new PluginManager(join(store.dir, 'plugins'), join(store.dir, 'plugin-data'));
+  netops = new NetOps({
+    store,
+    vault,
+    confirmHostKey: (p) => ask<boolean>('prompt:hostKey', { connId: 'netops', ...p }),
+    progress: (p) => send('netops:progress', p),
+    notify: (msg, kind) => send('app:toast', msg, kind),
+  });
   registerIpc();
   createWindow();
+  await netops.schedule();
+  await sync.schedule();
+  setTimeout(() => void sync.run(true), 4000).unref();
 });
 
 app.on('window-all-closed', () => {
-  void servers.stopAll().finally(() => app.quit());
+  sync?.stop();
+  netops?.stop();
+  void Promise.all([servers.stopAll(), rdpGateway.stop()]).finally(() => app.quit());
 });

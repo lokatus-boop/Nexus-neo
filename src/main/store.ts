@@ -2,7 +2,7 @@
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { Macro, ServerConfig, SessionConfig, Settings } from '../shared/types';
+import type { ConfigTemplate, ThemeDef, Macro, ServerConfig, SessionConfig, Settings } from '../shared/types';
 
 export const DEFAULT_SETTINGS: Settings = {
   theme: 'nexus-dark',
@@ -23,6 +23,9 @@ export const DEFAULT_SETTINGS: Settings = {
   logStripAnsi: true,
   autoReconnect: true,
   disclaimerAccepted: 0,
+  sync: { enabled: false, mode: 'folder', path: '', includeSecrets: false, intervalMin: 15, deviceName: '' },
+  backupSchedule: { enabled: false, everyHours: 24, devices: [] },
+  plugins: {},
 };
 
 class JsonFile<T> {
@@ -55,17 +58,102 @@ class JsonFile<T> {
 export class Store {
   private sessions: JsonFile<SessionConfig[]>;
   private macros: JsonFile<Macro[]>;
+  private templates: JsonFile<ConfigTemplate[]>;
+  private themes: JsonFile<ThemeDef[]>;
   private settings: JsonFile<Partial<Settings>>;
   private known: JsonFile<Record<string, string>>;
   private servers: JsonFile<ServerConfig[] | null>;
   private knownCache: Record<string, string> = {};
+  private deleted: JsonFile<Record<string, number>>;
+  /** Se llama tras cualquier cambio en datos sincronizables (sesiones, macros, plantillas…). */
+  onChange: (() => void) | null = null;
 
   constructor(readonly dir: string) {
     this.sessions = new JsonFile(join(dir, 'sessions.json'), () => []);
     this.macros = new JsonFile(join(dir, 'macros.json'), () => []);
+    this.templates = new JsonFile(join(dir, 'templates.json'), () => []);
+    this.themes = new JsonFile(join(dir, 'themes.json'), () => []);
     this.settings = new JsonFile(join(dir, 'settings.json'), () => ({}));
     this.known = new JsonFile(join(dir, 'known_hosts.json'), () => ({}));
     this.servers = new JsonFile(join(dir, 'servers.json'), () => null);
+    this.deleted = new JsonFile(join(dir, 'deleted.json'), () => ({}));
+  }
+
+  private changed(): void {
+    this.onChange?.();
+  }
+
+  /** Marcas de borrado para la sincronización: "colección:id" → fecha. */
+  async tombstones(): Promise<Record<string, number>> {
+    return { ...(await this.deleted.read()) };
+  }
+
+  async setTombstones(t: Record<string, number>): Promise<void> {
+    await this.deleted.write(t);
+  }
+
+  private async markDeleted(collection: string, id: string): Promise<void> {
+    const t = await this.deleted.read();
+    await this.deleted.write({ ...t, [`${collection}:${id}`]: Date.now() });
+  }
+
+  /** Sustituye la lista completa (lo usa la sincronización tras fusionar). */
+  async replaceSessions(list: SessionConfig[]): Promise<void> {
+    await this.sessions.write(list);
+  }
+
+  async replaceMacros(list: Macro[]): Promise<void> {
+    await this.macros.write(list);
+  }
+
+  async replaceTemplates(list: ConfigTemplate[]): Promise<void> {
+    await this.templates.write(list);
+  }
+
+  listTemplates(): Promise<ConfigTemplate[]> {
+    return this.templates.read();
+  }
+
+  async saveTemplate(t: ConfigTemplate): Promise<ConfigTemplate> {
+    const list = [...(await this.templates.read())];
+    const clean = { ...t, id: t.id || randomUUID(), updatedAt: Date.now() };
+    const i = list.findIndex((x) => x.id === clean.id);
+    if (i >= 0) list[i] = clean;
+    else list.push(clean);
+    await this.templates.write(list);
+    this.changed();
+    return clean;
+  }
+
+  async deleteTemplate(id: string): Promise<void> {
+    await this.templates.write((await this.templates.read()).filter((t) => t.id !== id));
+    await this.markDeleted('templates', id);
+    this.changed();
+  }
+
+  listThemes(): Promise<ThemeDef[]> {
+    return this.themes.read();
+  }
+
+  async replaceThemes(list: ThemeDef[]): Promise<void> {
+    await this.themes.write(list);
+  }
+
+  async saveTheme(t: ThemeDef): Promise<ThemeDef> {
+    const list = [...(await this.themes.read())];
+    const clean = { ...t, updatedAt: Date.now() };
+    const i = list.findIndex((x) => x.id === clean.id);
+    if (i >= 0) list[i] = clean;
+    else list.push(clean);
+    await this.themes.write(list);
+    this.changed();
+    return clean;
+  }
+
+  async deleteTheme(id: string): Promise<void> {
+    await this.themes.write((await this.themes.read()).filter((t) => t.id !== id));
+    await this.markDeleted('themes', id);
+    this.changed();
   }
 
   async init(): Promise<void> {
@@ -83,22 +171,27 @@ export class Store {
 
   async saveSession(s: SessionConfig): Promise<SessionConfig> {
     const list = [...(await this.sessions.read())];
-    const clean: SessionConfig = { ...s, id: s.id || randomUUID(), name: s.name?.trim() || s.host || 'Sesión' };
+    const clean: SessionConfig = { ...s, id: s.id || randomUUID(), name: s.name?.trim() || s.host || 'Sesión', updatedAt: Date.now() };
     const i = list.findIndex((x) => x.id === clean.id);
     if (i >= 0) list[i] = clean;
     else list.push(clean);
     await this.sessions.write(list);
+    this.changed();
     return clean;
   }
 
   async addSessions(items: SessionConfig[]): Promise<void> {
-    const list = [...(await this.sessions.read()), ...items];
+    const now = Date.now();
+    const list = [...(await this.sessions.read()), ...items.map((s) => ({ ...s, updatedAt: now }))];
     await this.sessions.write(list);
+    this.changed();
   }
 
   async deleteSession(id: string): Promise<void> {
     const list = (await this.sessions.read()).filter((s) => s.id !== id);
     await this.sessions.write(list);
+    await this.markDeleted('sessions', id);
+    this.changed();
   }
 
   listMacros(): Promise<Macro[]> {
@@ -107,16 +200,19 @@ export class Store {
 
   async saveMacro(m: Macro): Promise<Macro> {
     const list = [...(await this.macros.read())];
-    const clean = { ...m, id: m.id || randomUUID() };
+    const clean = { ...m, id: m.id || randomUUID(), updatedAt: Date.now() };
     const i = list.findIndex((x) => x.id === clean.id);
     if (i >= 0) list[i] = clean;
     else list.push(clean);
     await this.macros.write(list);
+    this.changed();
     return clean;
   }
 
   async deleteMacro(id: string): Promise<void> {
     await this.macros.write((await this.macros.read()).filter((m) => m.id !== id));
+    await this.markDeleted('macros', id);
+    this.changed();
   }
 
   async getSettings(): Promise<Settings> {

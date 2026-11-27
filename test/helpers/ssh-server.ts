@@ -4,6 +4,7 @@ import { Server, utils, Connection } from 'ssh2';
 import { createServer, connect, AddressInfo, Server as NetServer } from 'node:net';
 import { promises as fs, constants as FS, Stats } from 'node:fs';
 import { join, normalize } from 'node:path';
+import { execFile } from 'node:child_process';
 import { generateKeyPairChecked } from '../../src/main/keys';
 
 const { STATUS_CODE } = utils.sftp;
@@ -82,6 +83,22 @@ export async function startTestServer(root: string, creds: { user: string; pass:
         });
         session.on('exec', (accept, _reject, info) => {
           const ch = accept();
+          if (info.command.startsWith('mosh-server new')) {
+            // Arranca el mosh-server real de la máquina de pruebas (si existe) escuchando en 127.0.0.1.
+            const cmd = info.command.replace(' -s ', ' -i 127.0.0.1 ');
+            execFile('sh', ['-c', cmd], { timeout: 10000 }, (err, out, errOut) => {
+              if (err && err.code === 127) {
+                ch.stderr.write('sh: 1: mosh-server: not found\n');
+                ch.exit(127);
+              } else {
+                ch.write(out);
+                ch.stderr.write(errOut);
+                ch.exit(0);
+              }
+              ch.end();
+            });
+            return;
+          }
           if (info.command.includes('/proc/loadavg')) ch.write('0.42 0.30 0.20 1/100 1234\n--\n8000 2000\n--\n37%\n--\n3700.5 100.0\n--\n4\n');
           else ch.write(`exec:${info.command}\n`);
           ch.exit(0);

@@ -1,11 +1,12 @@
 // Prueba de humo de la interfaz: arranca la app real de Electron con Playwright
 // y recorre los flujos principales contra un servidor SSH de pruebas.
 import { _electron as electron, Page } from 'playwright';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import { startTestServer } from './helpers/ssh-server';
+import { startFakeSwitch } from './helpers/fake-switch';
 import { startFakeVnc } from './helpers/rfb-server';
 
 const shots = process.env.SHOTS_DIR || join(tmpdir(), 'nexus-shots');
@@ -33,6 +34,21 @@ async function main() {
   const dataDir = mkdtempSync(join(tmpdir(), 'nexus-ui-data-'));
   const fakeHome = mkdtempSync(join(tmpdir(), 'nexus-ui-home-'));
 
+  // Plugin de ejemplo ya copiado en la carpeta de plugins (sin activar).
+  cpSync(join(process.cwd(), 'examples/plugins/marcas-de-tiempo'), join(dataDir, 'plugins', 'marcas-de-tiempo'), { recursive: true });
+  // Plugin «sonda» ya activado: comprueba que el worker no tiene red, Node ni DOM.
+  mkdirSync(join(dataDir, 'plugins', 'sonda'), { recursive: true });
+  writeFileSync(join(dataDir, 'plugins', 'sonda', 'manifest.json'), JSON.stringify({ id: 'sonda', name: 'Sonda', version: '1.0.0' }));
+  writeFileSync(join(dataDir, 'plugins', 'sonda', 'main.js'), `
+    const t = (f) => { try { return f(); } catch { return 'bloqueado'; } };
+    const r = { fetch: typeof fetch, xhr: typeof XMLHttpRequest, ws: typeof WebSocket, imp: typeof importScripts, req: typeof require, proc: typeof process, doc: typeof document,
+      proto: typeof Object.getPrototypeOf(self).fetch, fn: t(() => typeof new Function('return fetch')()) };
+    const vis = Object.keys(r).filter((k) => r[k] !== 'undefined' && r[k] !== 'bloqueado');
+    nexus.ui.setStatus('sonda:' + (vis.length ? vis.join(',') : 'aislado'));
+    nexus.terminal.send('no-debe-llegar').catch((e) => nexus.storage.set('error', e.message));
+  `);
+  writeFileSync(join(dataDir, 'settings.json'), JSON.stringify({ plugins: { sonda: { permissions: [] } } }));
+
   const { createRequire } = await import('node:module');
   const executablePath = createRequire(join(process.cwd(), 'package.json'))('electron') as unknown as string;
   const app = await electron.launch({
@@ -57,6 +73,11 @@ async function main() {
   console.log('✔ aviso legal en el primer arranque');
 
   await page.waitForSelector('#welcome .card-btn');
+  await page.waitForSelector('#status-plugins:has-text("sonda:")');
+  assert.equal(await page.locator('#status-plugins').innerText(), 'sonda:aislado');
+  for (let i = 0; i < 50 && !existsSync(join(dataDir, 'plugin-data', 'sonda.json')); i++) await page.waitForTimeout(100);
+  assert.match(JSON.parse(readFileSync(join(dataDir, 'plugin-data', 'sonda.json'), 'utf8')).error, /permiso «terminal:write»/);
+  console.log('✔ plugins aislados (sin red, Node ni DOM; permisos comprobados)');
   await page.screenshot({ path: join(shots, '01-bienvenida.png') });
   console.log('✔ pantalla de bienvenida');
 
@@ -140,6 +161,84 @@ async function main() {
   await waitTerm(page, 'eco:saludo-macro');
   console.log('✔ macros');
 
+  // Sincronización cifrada a una carpeta
+  const syncDir = mkdtempSync(join(tmpdir(), 'nexus-ui-sync-'));
+  await page.click('#btn-sync');
+  const sm = page.locator('.modal').last();
+  await sm.locator('label.check:has-text("Activar") input').check();
+  await sm.locator('.field:has-text("Carpeta") input').fill(syncDir);
+  await sm.locator('.field:has-text("Frase de sincronización") input').fill('frase-de-prueba');
+  await sm.locator('.field:has-text("Repítela") input').fill('frase-de-prueba');
+  await sm.locator('.btn:has-text("Sincronizar ahora")').click();
+  await page.waitForSelector('#sync-status:has-text("Sincronizado")');
+  await page.evaluate(() => document.getElementById('toasts')?.remove());
+  await page.screenshot({ path: join(shots, '13-sincronizacion.png') });
+  await sm.locator('.btn.primary:has-text("Guardar")').click();
+  await page.waitForSelector('#btn-sync.active');
+  assert.ok(existsSync(join(syncDir, 'nexus-neo-sync.json')));
+  assert.ok(!readFileSync(join(syncDir, 'nexus-neo-sync.json'), 'utf8').includes('Servidor de pruebas'), 'el archivo de sincronización debe ir cifrado');
+  console.log('✔ sincronización cifrada');
+
+  // Operaciones de red contra un switch simulado: despliegue, plantilla y respaldo
+  const fsw = await startFakeSwitch('sw-ui');
+  const devCsv = `name,host,port,vendor,vlan\nsw-ui,127.0.0.1,${fsw.sshPort},cisco-ios,30`;
+  const fillConn = async (pane: string) => {
+    const p = page.locator(`#np-pane-${pane}`);
+    const d = p.locator('details.np-adv:has(summary:has-text("Credenciales"))');
+    await d.locator('summary').click();
+    await d.locator('.field:has-text("Usuario") input').fill('admin');
+    await d.locator('.field:has(> .field-label:text-is("Contraseña")) input').fill('switchpass');
+    await d.locator('.field:has-text("Contraseña de enable") input').fill('cisco');
+    await d.locator('label.check:has-text("Aceptar automáticamente") input').check();
+    await p.locator('.field:has-text("Más equipos (CSV)") textarea').fill(devCsv);
+  };
+  await page.click('#btn-netops');
+  await page.waitForSelector('#np-pane-deploy');
+  await fillConn('deploy');
+  await page.locator('#np-pane-deploy .field:has(> .field-label:text-is("Órdenes")) textarea').fill('configure terminal\nvlan {{vlan}}\n name usuarios\nend\nshow version');
+  await page.click('#np-run-deploy');
+  await page.waitForSelector('#np-pane-deploy #np-summary:has-text("Terminado: 1 correctos")', { timeout: 30000 });
+  await page.click('#np-pane-deploy tr[data-device="sw-ui"]');
+  await page.waitForSelector('#np-pane-deploy .np-output:has-text("Version 15.2")');
+  assert.ok(fsw.state.config.includes('vlan 30'), 'el despliegue debe aplicar la orden con la variable del CSV');
+  await page.evaluate(() => document.getElementById('toasts')?.remove());
+  await page.screenshot({ path: join(shots, '14-despliegue.png') });
+  console.log('✔ despliegue masivo');
+
+  await page.click('.np-tab:has-text("Plantillas")');
+  const tp = page.locator('#np-pane-templates');
+  await tp.locator('.field:has-text("Nombre") input').first().fill('Gestión acceso');
+  await tp.locator('.field:has(> .field-label:text-is("Plantilla")) textarea').fill('hostname {{name}}\ninterface Vlan{{vlan | 10}}\n ip address {{ip}} 255.255.255.0');
+  await tp.locator('.field:has-text("Valores por equipo") textarea').fill('name,host,ip\nsw-a,10.0.0.1,10.0.10.1\nsw-b,10.0.0.2,');
+  await page.waitForSelector('#np-tpl-preview:has-text("ip address 10.0.10.1")');
+  await tp.locator('.field:has-text("Vista previa de") select').selectOption({ label: 'sw-b' });
+  await page.waitForSelector('#np-tpl-preview:has-text("Faltan: ip")');
+  await page.click('#np-tpl-save');
+  await page.waitForSelector('#np-pane-templates .np-tpl.active:has-text("Gestión acceso")');
+  assert.ok(JSON.parse(readFileSync(join(dataDir, 'templates.json'), 'utf8')).some((t: { name: string }) => t.name === 'Gestión acceso'));
+  await page.evaluate(() => document.getElementById('toasts')?.remove());
+  await page.screenshot({ path: join(shots, '15-plantillas.png') });
+  console.log('✔ plantillas de configuración');
+
+  await page.click('.np-tab:has-text("Respaldos")');
+  await fillConn('backups');
+  await page.click('#np-run-backup');
+  await page.waitForSelector('#np-pane-backups #np-summary:has-text("Terminado: 1 correctos")', { timeout: 30000 });
+  await page.waitForSelector('#np-pane-backups .np-dev-backups .np-tpl:has-text("sw-ui")');
+  fsw.state.config.splice(4, 0, 'ip domain-name ui.local');
+  await page.click('#np-run-backup');
+  await page.waitForFunction(() => document.querySelector('#np-pane-backups #np-summary')?.textContent?.startsWith('Terminado') && document.querySelector('#np-pane-backups .np-dev-backups .np-tpl small')?.textContent?.startsWith('2 '), null, { timeout: 30000 });
+  await page.click('#np-pane-backups .np-dev-backups .np-tpl:has-text("sw-ui")');
+  await page.click('#np-compare');
+  await page.waitForSelector('.np-diff .np-add:has-text("ip domain-name ui.local")');
+  await page.evaluate(() => document.getElementById('toasts')?.remove());
+  await page.locator('.np-diff').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(shots, '16-respaldos.png') });
+  await page.click('.modal .modal-footer .btn:has-text("Cerrar")');
+  await page.waitForSelector('.modal', { state: 'detached' });
+  await fsw.close();
+  console.log('✔ respaldos de configuración');
+
   // Paleta
   await page.locator('.pane:not(.hidden) .xterm').click();
   await page.keyboard.press('Control+Shift+K');
@@ -219,6 +318,31 @@ async function main() {
   await page.locator('.modal .btn.primary:has-text("Cerrar")').click();
   console.log('✔ claves SSH');
 
+  // Mosh (arranca mosh-server a través del servidor SSH de pruebas), si está instalado.
+  let hasMosh = true;
+  try {
+    (await import('node:child_process')).execFileSync('mosh-server', ['--version'], { stdio: 'ignore' });
+  } catch {
+    hasMosh = false;
+  }
+  if (hasMosh) {
+    await page.locator('#quick-connect').fill(`mosh://nexus@127.0.0.1:${srv.port}`);
+    await page.locator('#quick-connect').press('Enter');
+    await page.waitForSelector('.modal:has-text("Contraseña para")');
+    await page.locator('.modal input[type=password]').fill('secreto');
+    await page.click('.modal .btn.primary');
+    await page.waitForSelector('.tab.active[data-state="connected"]:has-text("mosh://")', { timeout: 20000 });
+    await page.locator('.pane.focused .xterm').click();
+    await page.keyboard.type('echo MOSH_$((6*7))\n');
+    await page.waitForFunction(() => document.querySelector('.pane.focused .xterm-rows')?.textContent?.includes('MOSH_42'), null, { timeout: 15000 });
+    await page.evaluate(() => document.getElementById('toasts')?.remove());
+    await page.screenshot({ path: join(shots, '12-mosh.png') });
+    await page.keyboard.press('Control+Shift+W');
+    await page.click('.modal .btn.danger:has-text("Cerrar")');
+    await page.waitForSelector('.tab:has-text("mosh://")', { state: 'detached' });
+    console.log('✔ Mosh');
+  } else console.log('… Mosh: mosh-server no está instalado');
+
   // Visor VNC integrado
   const vnc = await startFakeVnc();
   const qc = page.locator('#quick-connect');
@@ -247,6 +371,77 @@ async function main() {
   await vncWin.close();
   await vnc.close();
   console.log('✔ visor VNC integrado');
+
+  // Visor RDP integrado (sólo si hay un servidor RDP de pruebas, p. ej. xrdp en CI).
+  if (process.env.NEXUS_RDP_TEST) {
+    await qc.fill(`rdp://usuario@${process.env.NEXUS_RDP_TEST}`);
+    const [rdpWin] = await Promise.all([app.waitForEvent('window'), qc.press('Enter')]);
+    rdpWin.on('pageerror', (e: Error) => errors.push(`[rdp] ${e.message}`));
+    await rdpWin.waitForSelector('#login-box', { timeout: 15000 });
+    await rdpWin.fill('#login-box input[type=password]', 'secreto');
+    await rdpWin.click('#login-box .primary');
+    await rdpWin.waitForSelector('#cert-box', { timeout: 15000 });
+    await rdpWin.click('#cert-box .primary');
+    await rdpWin.waitForSelector('#status.ok', { timeout: 30000 });
+    await rdpWin.waitForFunction(() => {
+      const c = document.querySelector('iron-remote-desktop')?.shadowRoot?.querySelector('canvas') as HTMLCanvasElement | null;
+      if (!c || c.width < 300) return false;
+      const ctx = c.getContext('2d');
+      if (!ctx) return false;
+      const d = ctx.getImageData(0, 0, c.width, c.height).data;
+      const colors = new Set<number>();
+      for (let i = 0; i < d.length && colors.size < 8; i += 4 * 97) colors.add((d[i] << 16) | (d[i + 1] << 8) | d[i + 2]);
+      return colors.size >= 8;
+    }, null, { timeout: 30000 });
+    await rdpWin.screenshot({ path: join(shots, '19-visor-rdp.png') });
+    await rdpWin.close();
+    console.log('✔ visor RDP integrado');
+  } else console.log('… visor RDP: sin servidor de pruebas (define NEXUS_RDP_TEST=host:puerto)');
+
+  // Plugins: activar el de ejemplo, usar su comando y su reacción a la salida
+  await page.click('#btn-settings');
+  await page.click('#btn-plugins');
+  await page.click('.pl-row[data-plugin="marcas-de-tiempo"] .btn:has-text("Activar")');
+  await page.locator('.modal').last().locator('.btn.primary:has-text("Activar")').click();
+  await page.waitForSelector('.pl-row.on[data-plugin="marcas-de-tiempo"]');
+  await page.evaluate(() => document.getElementById('toasts')?.remove());
+  await page.screenshot({ path: join(shots, '17-plugins.png') });
+  await page.locator('.modal').last().locator('.btn:has-text("Cerrar")').click();
+  await page.locator('.modal').last().locator('.btn:has-text("Cancelar")').click();
+  await page.waitForSelector('.modal', { state: 'detached' });
+  assert.ok(JSON.parse(readFileSync(join(dataDir, 'settings.json'), 'utf8')).plugins['marcas-de-tiempo'].permissions.includes('terminal:write'));
+  await page.locator('.pane:not(.hidden) .xterm').click();
+  await page.keyboard.press('Control+Shift+K');
+  await page.keyboard.type('Insertar fecha');
+  await page.waitForSelector('.palette-list :text("Insertar fecha y hora")');
+  await page.keyboard.press('Enter');
+  // El comando escribe la fecha en el terminal activo (sin pulsar Intro).
+  await waitTerm(page, ` ${new Date().getFullYear()}-`);
+  await page.locator('.pane:not(.hidden) .xterm').click();
+  await page.keyboard.press('Control+C');
+  await page.keyboard.type('% Invalid input');
+  await page.waitForSelector('#status-plugins:has-text("1 error")');
+  await page.keyboard.press('Control+C');
+  console.log('✔ plugins');
+
+  // Temas: importar un esquema de Windows Terminal y usarlo
+  await page.click('#btn-settings');
+  await page.click('#btn-themes');
+  await page.waitForSelector('.te-item[data-theme="plugin-marcas-de-tiempo-ambar-retro"]');
+  await page.click('#te-import');
+  await page.locator('.modal').last().locator('textarea').fill(JSON.stringify({ name: 'Campbell Plus', background: '#0C0C0C', foreground: '#CCCCCC', black: '#0C0C0C', red: '#C50F1F', green: '#13A10E', yellow: '#C19C00', blue: '#0037DA', purple: '#881798', cyan: '#3A96DD', white: '#CCCCCC', brightBlack: '#767676', brightRed: '#E74856', brightGreen: '#16C60C', brightYellow: '#F9F1A5', brightBlue: '#3B78FF', brightPurple: '#B4009E', brightCyan: '#61D6D6', brightWhite: '#F2F2F2' }));
+  await page.locator('.modal').last().locator('.btn.primary:has-text("Importar")').click();
+  await page.waitForSelector('.te-item.active:has-text("Campbell Plus")');
+  await page.evaluate(() => document.getElementById('toasts')?.remove());
+  await page.screenshot({ path: join(shots, '18-temas.png') });
+  await page.locator('.modal').last().locator('.btn.primary:has-text("Usar este tema")').click();
+  await page.waitForFunction(() => document.querySelectorAll('.modal').length === 1);
+  assert.equal(await page.locator('.modal .field:has-text("Tema") select').inputValue(), 'custom-campbell-plus');
+  await page.click('.modal .btn.primary:has-text("Guardar")');
+  await page.waitForSelector('.modal', { state: 'detached' });
+  assert.equal(JSON.parse(readFileSync(join(dataDir, 'settings.json'), 'utf8')).theme, 'custom-campbell-plus');
+  assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--text').trim()), '#cccccc');
+  console.log('✔ temas personalizados');
 
   // Tema claro
   await page.click('#btn-settings');

@@ -5,8 +5,10 @@
 **Hecho por Luismi Sanz.**
 
 Cliente de acceso remoto **multiplataforma (Windows y Linux)** que reúne en una sola ventana con pestañas
-SSH, SFTP, Telnet, puerto serie, túneles SSH, reenvío X11, terminal local, multi-ejecución, macros y una
-bóveda de credenciales cifrada. Es un proyecto original (nombre, diseño y código propios), pensado como
+SSH, SFTP, Telnet, Mosh, puerto serie, escritorio remoto RDP y VNC integrados, túneles SSH, reenvío X11,
+terminal local, multi-ejecución, macros, herramientas para equipos de red (despliegue masivo, plantillas y
+respaldos de configuración), sincronización cifrada entre equipos, temas, plugins y una bóveda de credenciales
+cifrada. Es un proyecto original (nombre, diseño y código propios), pensado como
 alternativa moderna y abierta a las «navajas suizas» de terminal para administradores de sistemas.
 
 ![Sesión SSH con explorador SFTP](docs/screenshots/03-ssh-sftp.png)
@@ -15,9 +17,13 @@ alternativa moderna y abierta a las «navajas suizas» de terminal para administ
 
 ![Vista dividida en cuatro paneles](docs/screenshots/08-vista-dividida.png)
 
+![Despliegue masivo a switches](docs/screenshots/14-despliegue.png)
+
+📖 **[Manual de usuario completo](docs/manual.md)** · 🧩 **[Cómo escribir un plugin](docs/plugins.md)**
+
 ## Funcionalidades
 
-### Disponibles en la versión 0.1.2
+### Disponibles en la versión 0.2.0
 
 | Área | Qué incluye |
 | --- | --- |
@@ -32,7 +38,14 @@ alternativa moderna y abierta a las «navajas suizas» de terminal para administ
 | **Telnet** | Con negociación de eco, SGA, tamaño de ventana (NAWS) y tipo de terminal. |
 | **Puerto serie** | Lista de puertos detectados, baudios, bits de datos/parada, paridad y eco local. |
 | **Visor VNC integrado** | Ventana propia basada en noVNC: conexión directa o **a través de un túnel SSH** de una sesión guardada, escalado, sólo lectura, `Ctrl+Alt+Supr`, envío del portapapeles, pantalla completa y contraseña guardada en la bóveda. Opcionalmente se puede usar un visor externo. |
-| **RDP** | Se abre con el cliente del sistema (`mstsc`, `xfreerdp` o el que configures). |
+| **Visor RDP integrado** | Ventana propia sin depender de `mstsc` ni FreeRDP: NLA/CredSSP y TLS con verificación del certificado, resolución dinámica, ajustar a la ventana, `Ctrl+Alt+Supr`, tecla Windows, portapapeles de texto, pantalla completa, reconexión, contraseña en la bóveda y **túnel SSH** opcional. Sigue siendo posible usar el cliente del sistema. |
+| **Mosh** | Cliente Mosh integrado (no hace falta instalar nada en tu equipo): entra por SSH, arranca `mosh-server` y sigue por UDP cifrado. La sesión sobrevive a cambios de red, suspensiones y cortes. Puertos, orden remota, locale y dirección UDP configurables. |
+| **Despliegue masivo** | Ejecuta órdenes con variables (`{{host}}`, columnas de un CSV…) y directivas (`!espera`, `!intro`, `!timeout`) en muchos switches y routers a la vez por SSH o Telnet, con modo enable, paginadores, preguntas de confirmación, detección de errores y **subida previa de firmware por SCP o SFTP**. Resultado y registro por equipo, `resumen.csv` y `resumen.json`. |
+| **Plantillas de configuración** | Configuraciones con variables rellenadas por equipo desde un CSV, con vista previa, generación de archivos `.cfg` y aplicación directa con el despliegue. |
+| **Respaldos de configuración** | 13 perfiles de fabricante (Cisco IOS/NX-OS/ASA, Aruba, HPE, Huawei, Juniper, MikroTik, FortiGate, Palo Alto, Dell…). Sólo guarda una versión nueva si la configuración cambia (ignora líneas volátiles), historial por equipo, **comparación entre versiones** y respaldo programado. |
+| **Sincronización cifrada** | Sesiones, macros, plantillas y temas entre tus equipos a través de una carpeta compartida (Dropbox, OneDrive, Syncthing, NAS…) o SFTP, en un único archivo cifrado con tu frase (scrypt + AES-256-GCM). Contraseñas de la bóveda opcionales. |
+| **Temas personalizables** | Editor con vista previa en vivo y aviso de contraste; importa esquemas de **Windows Terminal** e **iTerm2**; exporta a JSON. |
+| **Plugins** | Comandos para la paleta, reacciones a la salida del terminal, barra de estado y temas. Cada plugin corre aislado en un Web Worker (sin Node, red ni DOM) y con permisos que aceptas al activarlo. |
 | **Vista dividida** | Una, dos (en columnas o filas) o cuatro sesiones a la vez en la misma ventana (`Ctrl+Mayús+D` cambia la disposición); clic en un panel para enfocarlo. |
 | **Registro de sesiones** | Guarda automáticamente la salida de todas las sesiones o sólo de las marcadas, en una carpeta por día, con opción de quitar los códigos de color. |
 | **Claves SSH** | Generador de claves ed25519, RSA y ECDSA (con frase de paso opcional), lista de claves de `~/.ssh` con huella SHA256 e **instalación de la clave pública en `authorized_keys`** de un servidor con un clic. **Importación de claves** (por ejemplo las que descargas de Oracle Cloud o AWS) a `~/.ssh` y **corrección automática de permisos**: en Windows ajusta la ACL para que sólo tu usuario pueda leer la clave, así `ssh -i`, scp o git no la rechazan con «UNPROTECTED PRIVATE KEY FILE». |
@@ -42,8 +55,8 @@ alternativa moderna y abierta a las «navajas suizas» de terminal para administ
 | **Macros** | Editor de macros con escapes (`\n`, `\t`, `\e`, `\xHH`) y pausas `{sleep:ms}`, **grabación** de lo que tecleas, ejecución en una pestaña o en todas las de multi-ejecución, y macro de arranque por sesión. |
 | **Bóveda de credenciales** | Contraseña maestra, scrypt + AES-256-GCM, bloqueo manual y automático por inactividad, cambio de contraseña maestra. Los secretos nunca se guardan en claro. |
 | **Monitor remoto** | Barra inferior con carga de CPU, RAM, disco y tiempo encendido del servidor SSH activo. |
-| **Personalización** | 5 temas (oscuros y claro), tipografía, tamaño (zoom con `Ctrl` `+`/`-`), cursor, historial, copiar al seleccionar, pegar con clic derecho. |
-| **Productividad** | Conexión rápida (`usuario@host:puerto`, `telnet://`, `rdp://`, `vnc://`), paleta de comandos `Ctrl+Mayús+K`, búsqueda en el terminal, enlaces clicables. |
+| **Personalización** | 5 temas integrados más los tuyos, tipografía, tamaño (zoom con `Ctrl` `+`/`-`), cursor, historial, copiar al seleccionar, pegar con clic derecho. |
+| **Productividad** | Conexión rápida (`usuario@host:puerto`, `telnet://`, `mosh://`, `rdp://`, `vnc://`), paleta de comandos `Ctrl+Mayús+K`, búsqueda en el terminal, enlaces clicables. |
 | **Modo portable** | Crea un archivo llamado `portable` junto al ejecutable y los datos se guardan en `./data`. |
 
 ### Mejoras frente a las herramientas clásicas
@@ -61,22 +74,20 @@ alternativa moderna y abierta a las «navajas suizas» de terminal para administ
 
 ## Hoja de ruta
 
-Hecho desde el MVP: servidores integrados, vista dividida, registro de sesiones, claves SSH,
-reconexión automática y visor VNC integrado.
+Hecho desde el MVP: servidores integrados, vista dividida, registro de sesiones, claves SSH, reconexión
+automática, visores VNC y RDP integrados, Mosh, sincronización cifrada, despliegue masivo, plantillas y
+respaldos de configuración, temas personalizables y plugins.
 
-Funciones previstas para alcanzar y superar el conjunto completo de una suite profesional:
+Próximas funciones:
 
-- [ ] **Visor RDP integrado** en pestaña (FreeRDP embebido o pasarela RDP→canvas).
 - [ ] Desacoplar pestañas en ventanas propias y reproducción de los registros de sesión.
 - [ ] **Servidor X11 integrado en Windows** (empaquetar VcXsrv/Xming opcional) para no depender de software externo.
-- [ ] **Mosh** (integrando el cliente `mosh-client` y el arranque vía SSH).
 - [ ] **rlogin, FTP/FTPS, XDMCP** y sesiones de explorador de archivos (S3, WebDAV).
-- [ ] **Sistema de plugins** (API para nuevos protocolos, paneles y acciones de la paleta).
+- [ ] Ampliar la API de plugins (nuevos protocolos y paneles).
 - [ ] SFTP que **sigue la carpeta del terminal**, cola de transferencias en paralelo y reanudación.
-- [ ] **Herramientas de red**: escáner de puertos, ping/traceroute gráficos, servidor DHCP mínimo para aprovisionar equipos y FTPS/SFTP integrados.
+- [ ] **Herramientas de red**: escáner de puertos, ping/traceroute gráficos y servidor DHCP mínimo para aprovisionar equipos.
 - [ ] **Importación de sesiones** desde otras herramientas (archivos de exportación de clientes populares, PuTTY desde el registro de Windows).
 - [ ] Integración con el almacén de credenciales del sistema (Windows Credential Manager / libsecret) y llaves FIDO2.
-- [ ] Sincronización cifrada de sesiones entre equipos.
 - [ ] Personalizador de marca para despliegues corporativos (logo, ajustes predefinidos).
 - [ ] Firmado de código y actualizaciones automáticas.
 - [ ] Traducción al inglés (i18n).
@@ -88,7 +99,7 @@ Requisitos: Node.js 20 o superior.
 ```bash
 npm install
 npm run dev          # compila y abre la app
-npm test             # pruebas unitarias e integración (SSH/SFTP/túneles contra un servidor de pruebas)
+npm test             # pruebas unitarias e integración (SSH/SFTP/túneles, Mosh, RDP, sincronización y switches simulados)
 npm run test:ui      # prueba de humo de la interfaz con Playwright (en Linux sin pantalla: xvfb-run -a npm run test:ui)
 npm run typecheck
 ```
@@ -128,9 +139,13 @@ El flujo de GitHub Actions compila y prueba en Linux y Windows y publica los paq
 ```
 src/
   main/            Proceso principal de Electron (Node.js)
-    protocols/     ssh (ssh2), local (node-pty), telnet, serial (serialport), túneles, SOCKS5, clientes externos
+    protocols/     ssh (ssh2), local (node-pty), telnet, serial (serialport), mosh (cliente SSP propio), túneles, SOCKS5, clientes externos
+    rdp/           Pasarela RDCleanPath local (TCP/TLS o túnel SSH) para el visor RDP
+    netops/        Sesiones de CLI desatendidas, SCP, despliegue masivo y respaldos
     vault.ts       Bóveda cifrada (scrypt + AES-256-GCM)
-    store.ts       Sesiones, macros, ajustes y huellas conocidas (JSON)
+    store.ts       Sesiones, macros, plantillas, temas, ajustes y huellas conocidas (JSON)
+    sync*.ts       Sincronización cifrada entre equipos (carpeta o SFTP)
+    plugins.ts     Instalación, manifiestos y almacenamiento de plugins
     sftp-ops.ts    Operaciones SFTP de alto nivel
     importers.ts   Importación de ~/.ssh/config y exportaciones propias
     servers/       Servidores integrados TFTP, FTP, HTTP y Syslog
@@ -138,9 +153,11 @@ src/
     session-log.ts Registro de sesiones a archivo
     vnc-bridge.ts  Puente TCP/SSH para el visor VNC
   preload/         Puente IPC mínimo (contextIsolation + sandbox)
-  renderer/        Interfaz (TypeScript sin framework + xterm.js; visor VNC con noVNC)
-  shared/          Tipos compartidos
-test/              Pruebas (node:test) y servidor SSH/SFTP de pruebas
+  renderer/        Interfaz (TypeScript sin framework + xterm.js; VNC con noVNC; RDP con IronRDP en WebAssembly; plugins en Web Workers)
+  shared/          Tipos, plantillas, CSV, diferencias y formatos de tema compartidos
+examples/plugins/  Plugin de ejemplo
+docs/              Manual de usuario y guía de plugins
+test/              Pruebas (node:test), servidor SSH/SFTP de pruebas y switch simulado
 ```
 
 Seguridad: la interfaz se ejecuta con `contextIsolation`, `sandbox` y sin `nodeIntegration`, con CSP estricta.

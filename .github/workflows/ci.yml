@@ -25,12 +25,19 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      - name: Servidores de prueba (Linux)
+        if: runner.os == 'Linux'
+        # xrdp para el visor RDP integrado y mosh-server para el cliente Mosh.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xrdp mosh
+          sudo systemctl start xrdp || true
       - run: npm test
       - name: Prueba de interfaz (Linux)
         if: runner.os == 'Linux'
         run: |
           npx playwright install-deps chromium
-          xvfb-run -a npm run test:ui
+          NEXUS_RDP_TEST=127.0.0.1:3389 xvfb-run -a npm run test:ui
       - name: Empaquetar
         run: npm run build:prod && npx electron-builder ${{ runner.os == 'Windows' && '--win' || '--linux' }} --publish never
       - uses: actions/upload-artifact@v4

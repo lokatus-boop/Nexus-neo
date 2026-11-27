@@ -1,6 +1,6 @@
 // Tipos compartidos entre el proceso principal, el preload y la interfaz.
 
-export type SessionKind = 'ssh' | 'local' | 'telnet' | 'serial' | 'rdp' | 'vnc';
+export type SessionKind = 'ssh' | 'mosh' | 'local' | 'telnet' | 'serial' | 'rdp' | 'vnc';
 
 export type TunnelType = 'local' | 'remote' | 'dynamic';
 
@@ -25,6 +25,8 @@ export interface SessionConfig {
   /** Carpeta en el árbol de sesiones, separada por "/". */
   folder: string;
   kind: SessionKind;
+  /** Última modificación (ms); la usa la sincronización para resolver conflictos. */
+  updatedAt?: number;
   color?: string;
   notes?: string;
 
@@ -50,6 +52,18 @@ export interface SessionConfig {
   /** Terminal remoto solicitado (TERM). */
   term?: string;
 
+  // Mosh (usa también los campos de autenticación SSH)
+  /** Ruta o nombre de mosh-server en el servidor. */
+  moshServer?: string;
+  /** Puerto o rango UDP para mosh-server, p. ej. "60000:60100". */
+  moshPorts?: string;
+  /** Orden a ejecutar en lugar del shell (p. ej. "tmux new -A -s main"). */
+  moshCommand?: string;
+  /** Locale UTF-8 para mosh-server (por defecto C.UTF-8). */
+  moshLocale?: string;
+  /** Host o IP para el UDP si difiere del de SSH. */
+  moshHost?: string;
+
   // Local
   shell?: string;
   shellArgs?: string[];
@@ -71,6 +85,10 @@ export interface SessionConfig {
   // RDP / VNC
   rdpFullscreen?: boolean;
   rdpResolution?: string;
+  /** RDP: dominio de Windows (opcional). */
+  rdpDomain?: string;
+  /** RDP: abrir con el cliente del sistema (mstsc/xfreerdp) en lugar del visor integrado. */
+  rdpExternal?: boolean;
 }
 
 export interface Macro {
@@ -82,6 +100,7 @@ export interface Macro {
    */
   body: string;
   shortcut?: string;
+  updatedAt?: number;
 }
 
 export interface Settings {
@@ -109,6 +128,13 @@ export interface Settings {
   autoReconnect: boolean;
   /** Versión del aviso legal aceptada por el usuario (0 = sin aceptar). */
   disclaimerAccepted: number;
+  /** Sincronización cifrada de sesiones entre equipos. */
+  sync: SyncSettings;
+  backupSchedule: BackupSchedule;
+  /** Carpeta de los respaldos de configuración (por defecto, dentro de los datos de la app). */
+  backupDir?: string;
+  /** Plugins activados y los permisos que se les han concedido. */
+  plugins: Record<string, { permissions: PluginPermission[] }>;
 }
 
 export interface SecretEntry {
@@ -219,4 +245,188 @@ export interface NetInterfaceInfo {
   name: string;
   address: string;
   family: 'IPv4' | 'IPv6';
+}
+
+// ---------------------------------------------------------------------------
+// Sincronización cifrada entre equipos
+
+export interface SyncSettings {
+  enabled: boolean;
+  /** Carpeta compartida (Dropbox, OneDrive, Syncthing, NAS…) o servidor SFTP. */
+  mode: 'folder' | 'sftp';
+  /** Carpeta local (modo folder) o ruta remota (modo sftp) del archivo de sincronización. */
+  path: string;
+  /** Sesión SSH guardada para el modo sftp. */
+  sessionId?: string;
+  /** Sincroniza también las contraseñas de la bóveda (siempre cifradas). */
+  includeSecrets: boolean;
+  /** Minutos entre sincronizaciones automáticas (0 = sólo manual y al cambiar algo). */
+  intervalMin: number;
+  /** Nombre de este equipo en el archivo de sincronización. */
+  deviceName: string;
+}
+
+export interface SyncStatus {
+  configured: boolean;
+  hasPassphrase: boolean;
+  running: boolean;
+  lastSync?: number;
+  lastError?: string;
+  lastResult?: SyncResult;
+}
+
+export interface SyncResult {
+  /** Cambios aplicados en este equipo. */
+  added: number;
+  updated: number;
+  removed: number;
+  /** Equipos que han escrito en el archivo. */
+  devices: string[];
+  /** Fecha del archivo remoto tras sincronizar. */
+  time: number;
+}
+
+// ---------------------------------------------------------------------------
+// Despliegue masivo y respaldo de configuraciones de equipos de red
+
+export interface NetDevice {
+  id: string;
+  name: string;
+  host: string;
+  port?: number;
+  protocol: 'ssh' | 'telnet';
+  /** Sesión guardada de la que se toman usuario, clave, bastión y contraseña de la bóveda. */
+  sessionId?: string;
+  username?: string;
+  /** Perfil de fabricante (para los respaldos). */
+  vendor?: string;
+  /** Variables propias del equipo (columnas extra del CSV). */
+  vars?: Record<string, string>;
+}
+
+export interface DeployJob {
+  name: string;
+  devices: NetDevice[];
+  /** Órdenes (una por línea) con variables {{…}} y directivas !espera, !intro, !timeout, !enviar. */
+  commands: string;
+  /** Subida previa de un archivo (firmware, configuración…) por SFTP o SCP. */
+  upload?: { localPath: string; remotePath: string; method: 'sftp' | 'scp' };
+  /** Credenciales para los equipos que no vienen de una sesión guardada. */
+  credentials?: { username?: string; password?: string };
+  enablePassword?: string;
+  concurrency: number;
+  timeoutSec: number;
+  prompt?: string;
+  stopOnError: boolean;
+  /** Expresión regular que marca una orden como fallida. */
+  errorPattern?: string;
+  /** Acepta (y guarda) automáticamente las huellas SSH de equipos nuevos; nunca las cambiadas. */
+  acceptNewHostKeys: boolean;
+  /** Variables comunes a todos los equipos. */
+  vars?: Record<string, string>;
+}
+
+export type DeviceRunStatus = 'pending' | 'running' | 'ok' | 'error' | 'cancelled';
+
+export interface DeviceRunResult {
+  deviceId: string;
+  name: string;
+  host: string;
+  status: DeviceRunStatus;
+  message?: string;
+  output: string;
+  startedAt?: number;
+  endedAt?: number;
+  logFile?: string;
+  /** Sólo respaldos: archivo guardado y si cambió respecto al anterior. */
+  backupFile?: string;
+  changed?: boolean;
+}
+
+export interface JobProgress {
+  jobId: string;
+  kind: 'deploy' | 'backup';
+  name: string;
+  dir: string;
+  results: DeviceRunResult[];
+  done: boolean;
+}
+
+export interface BackupJob {
+  name: string;
+  devices: NetDevice[];
+  credentials?: { username?: string; password?: string };
+  enablePassword?: string;
+  concurrency: number;
+  timeoutSec: number;
+  prompt?: string;
+  acceptNewHostKeys: boolean;
+  /** Orden propia en lugar de la del perfil de fabricante. */
+  command?: string;
+}
+
+export interface BackupEntry {
+  device: string;
+  file: string;
+  time: number;
+  size: number;
+}
+
+/** Plantilla de configuración con variables {{…}} que se rellena por equipo. */
+export interface ConfigTemplate {
+  id: string;
+  name: string;
+  vendor?: string;
+  description?: string;
+  body: string;
+  updatedAt?: number;
+}
+
+/** Respaldo programado: equipos (sesiones guardadas) y cada cuántas horas. */
+export interface BackupSchedule {
+  enabled: boolean;
+  everyHours: number;
+  /** Ids de sesiones SSH/Telnet guardadas con su perfil de fabricante. */
+  devices: { sessionId: string; vendor: string }[];
+  lastRun?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Temas y plugins
+
+/** Tema de la interfaz y del terminal (los integrados, los propios y los de plugins). */
+export interface ThemeDef {
+  id: string;
+  name: string;
+  dark: boolean;
+  /** Colores de la interfaz: bg, panel, panel2, border, text, muted, accent, accent2, danger, warn. */
+  ui: Record<string, string>;
+  /** Colores del terminal (formato xterm.js: background, foreground, cursor, black…brightWhite). */
+  term: Record<string, string>;
+  updatedAt?: number;
+}
+
+/** Permisos que un plugin puede pedir (además de comandos, avisos, temas y almacenamiento propio). */
+export type PluginPermission = 'terminal:read' | 'terminal:write' | 'sessions:read';
+
+export interface PluginManifest {
+  id: string;
+  name: string;
+  version: string;
+  description?: string;
+  author?: string;
+  /** Archivo JavaScript principal (por defecto main.js). */
+  main?: string;
+  permissions?: PluginPermission[];
+}
+
+export interface PluginInfo {
+  id: string;
+  dir: string;
+  manifest?: PluginManifest;
+  /** Error al leer el manifiesto. */
+  error?: string;
+  enabled: boolean;
+  /** Activado, pero pide permisos que el usuario aún no ha aceptado (p. ej. tras actualizarlo). */
+  needsApproval: boolean;
 }

@@ -1,12 +1,12 @@
 import type { SessionConfig, SessionKind } from '../shared/types';
 
-export const DEFAULT_PORTS: Partial<Record<SessionKind, number>> = { ssh: 22, telnet: 23, rdp: 3389, vnc: 5900 };
+export const DEFAULT_PORTS: Partial<Record<SessionKind, number>> = { ssh: 22, mosh: 22, telnet: 23, rdp: 3389, vnc: 5900 };
 
 /** Interpreta "usuario@host:puerto" para la conexión rápida. */
 export function parseQuickConnect(text: string): Partial<SessionConfig> | null {
   const t = text.trim();
   if (!t) return null;
-  const m = /^(?:(ssh|telnet|rdp|vnc):\/\/)?(?:([^@\s]+)@)?(\[[^\]]+\]|[^:\s/]+)(?::(\d+))?\/?$/i.exec(t);
+  const m = /^(?:(ssh|mosh|telnet|rdp|vnc):\/\/)?(?:([^@\s]+)@)?(\[[^\]]+\]|[^:\s/]+)(?::(\d+))?\/?$/i.exec(t);
   if (!m) return null;
   const kind = ((m[1] || 'ssh').toLowerCase()) as SessionKind;
   return {

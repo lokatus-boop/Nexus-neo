@@ -1,11 +1,10 @@
 import type { ITheme } from '@xterm/xterm';
+import type { ThemeDef } from '../shared/types';
 
-export interface AppTheme {
-  id: string;
-  name: string;
-  dark: boolean;
-  ui: Record<string, string>;
+export interface AppTheme extends Omit<ThemeDef, 'term'> {
   term: ITheme;
+  /** De dónde viene: integrado, propio (editable) o de un plugin. */
+  origin?: 'builtin' | 'custom' | 'plugin';
 }
 
 const base16 = (c: string[]): Partial<ITheme> => ({
@@ -66,8 +65,28 @@ export const THEMES: AppTheme[] = [
   },
 ];
 
+let custom: AppTheme[] = [];
+const fromPlugins = new Map<string, AppTheme>();
+
+export function setCustomThemes(list: ThemeDef[]): void {
+  custom = list.map((t) => ({ ...t, term: t.term as ITheme, origin: 'custom' }));
+}
+
+export function addPluginTheme(t: ThemeDef): void {
+  fromPlugins.set(t.id, { ...t, term: t.term as ITheme, origin: 'plugin' });
+}
+
+export function removePluginThemes(prefix: string): void {
+  for (const id of [...fromPlugins.keys()]) if (id.startsWith(prefix)) fromPlugins.delete(id);
+}
+
+/** Todos los temas: integrados, propios y de plugins. */
+export function allThemes(): AppTheme[] {
+  return [...THEMES.map((t) => ({ ...t, origin: 'builtin' as const })), ...custom, ...fromPlugins.values()];
+}
+
 export function themeById(id: string): AppTheme {
-  return THEMES.find((t) => t.id === id) || THEMES[0];
+  return allThemes().find((t) => t.id === id) || THEMES[0];
 }
 
 export function applyUiTheme(t: AppTheme): void {
@@ -75,4 +94,10 @@ export function applyUiTheme(t: AppTheme): void {
   for (const [k, v] of Object.entries(t.ui)) root.style.setProperty(`--${k}`, v);
   root.style.setProperty('--term-bg', t.term.background || '#000');
   root.dataset.theme = t.dark ? 'dark' : 'light';
+}
+
+/** El tema como ThemeDef (para editarlo, exportarlo o guardarlo). */
+export function toDef(t: AppTheme): ThemeDef {
+  const { origin: _o, ...rest } = t;
+  return { ...rest, term: { ...(t.term as Record<string, string>) } };
 }

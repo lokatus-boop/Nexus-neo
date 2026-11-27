@@ -365,7 +365,7 @@ export class Tab {
 }
 
 export function kindIcon(kind: SessionConfig['kind']) {
-  return ({ ssh: 'server', local: 'terminal', telnet: 'link', serial: 'serial', rdp: 'monitor', vnc: 'monitor' } as const)[kind];
+  return ({ ssh: 'server', mosh: 'wifi', local: 'terminal', telnet: 'link', serial: 'serial', rdp: 'monitor', vnc: 'monitor' } as const)[kind];
 }
 
 function formatUptime(sec: number): string {

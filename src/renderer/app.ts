@@ -6,11 +6,16 @@ import { Tab, TabHost, kindIcon } from './tab';
 import { editSession } from './session-editor';
 import { parseQuickConnect } from './quick-connect';
 import { parseMacro, runMacro, encodeRecording } from './macro-engine';
-import { THEMES, themeById, applyUiTheme } from './themes';
+import { allThemes, themeById, applyUiTheme, addPluginTheme } from './themes';
+import { themeEditor, refreshCustomThemes } from './theme-editor';
+import { PluginHost } from './plugin-host';
+import { pluginsDialog, startPlugins } from './plugins-dialog';
 import { ServersPanel } from './servers-panel';
 import { aboutDialog, ensureDisclaimerAccepted, logo } from './about';
 import { AUTHOR } from '../shared/legal';
 import { keysDialog } from './keys-dialog';
+import { syncDialog } from './sync-dialog';
+import { netopsDialog } from './netops-dialog';
 
 const serversPanel = new ServersPanel();
 import type { AuthPrompt, HostKeyPrompt, Macro, SessionConfig, Settings, TunnelStatus, VaultStatus } from '../shared/types';
@@ -67,7 +72,8 @@ async function openSession(session: SessionConfig): Promise<Tab | null> {
   if (session.kind === 'rdp' || session.kind === 'vnc') {
     try {
       await api.conn.open(uid(), { session, cols: 80, rows: 24 });
-      toast(session.kind === 'vnc' && !session.vncExternal ? `VNC: abriendo ${session.name} en el visor integrado` : `${session.kind.toUpperCase()} abierto con el cliente del sistema`, 'ok');
+      const integrated = session.kind === 'vnc' ? !session.vncExternal : !session.rdpExternal && !state.settings!.rdpClient;
+      toast(integrated ? `${session.kind.toUpperCase()}: abriendo ${session.name} en el visor integrado` : `${session.kind.toUpperCase()} abierto con el cliente del sistema`, 'ok');
     } catch (e) {
       toast(errMsg(e), 'error');
     }
@@ -576,7 +582,7 @@ async function addTempTunnel(): Promise<void> {
 
 async function settingsDialog(): Promise<void> {
   const s = state.settings!;
-  const theme = select(THEMES.map((t) => [t.id, t.name] as [string, string]), s.theme);
+  const theme = select(allThemes().map((t) => [t.id, t.name] as [string, string]), s.theme);
   const fontFamily = input({ value: s.fontFamily });
   const fontSize = input({ type: 'number', value: String(s.fontSize), min: '8', max: '32' });
   const cursorStyle = select([['block', 'Bloque'], ['bar', 'Barra'], ['underline', 'Subrayado']], s.cursorStyle);
@@ -586,7 +592,7 @@ async function settingsDialog(): Promise<void> {
   const rcp = checkbox('Pegar con clic derecho', s.rightClickPaste);
   const coc = checkbox('Confirmar al cerrar pestañas remotas', s.confirmOnClose);
   const shell = select([['', 'Automático'], ...state.info!.shells.map((x) => [x.id, x.name] as [string, string])], s.defaultLocalShell);
-  const rdp = input({ value: s.rdpClient, placeholder: 'Automático (mstsc / xfreerdp)' });
+  const rdp = input({ value: s.rdpClient, placeholder: 'Vacío = visor integrado (o mstsc / xfreerdp)' });
   const vnc = input({ value: s.vncClient, placeholder: 'vncviewer' });
   const autolock = input({ type: 'number', value: String(s.vaultAutoLockMin), min: '0' });
   const logAll = checkbox('Guardar un registro de todas las sesiones', s.logAllSessions);
@@ -598,7 +604,15 @@ async function settingsDialog(): Promise<void> {
   const body = el('div', { class: 'session-form' },
     el('fieldset', {}, el('legend', {}, 'Apariencia'),
       el('div', { class: 'grid3' }, field('Tema', theme), field('Tamaño de letra', fontSize), field('Cursor', cursorStyle)),
-      field('Tipografía', fontFamily), blink.wrap),
+      field('Tipografía', fontFamily), blink.wrap,
+      el('div', { class: 'row' },
+        el('button', { class: 'btn ghost', type: 'button', id: 'btn-themes', onclick: async () => {
+          const id = await themeEditor(theme.value);
+          theme.replaceChildren(...allThemes().map((t) => el('option', { value: t.id }, t.name)));
+          theme.value = id || s.theme;
+          applyUiTheme(themeById(theme.value));
+        } }, 'Personalizar temas…'),
+        el('button', { class: 'btn ghost', type: 'button', id: 'btn-plugins', onclick: () => void pluginsDialog(pluginHost) }, 'Plugins…'))),
     el('fieldset', {}, el('legend', {}, 'Terminal'),
       el('div', { class: 'grid2' }, field('Líneas de historial', scrollback), field('Shell local por defecto', shell)),
       cos.wrap, rcp.wrap, coc.wrap, autoRe.wrap),
@@ -683,6 +697,18 @@ async function palette(): Promise<void> {
     { label: 'Claves SSH (generar / instalar)…', sub: 'Acción', run: () => void openKeys() },
     { label: 'Servidores TFTP / FTP / HTTP / Syslog', sub: 'Acción', run: () => void serversPanel.toggle(true) },
     { label: 'Ajustes…', sub: 'Acción', run: () => void settingsDialog() },
+    { label: 'Temas: crear, editar e importar…', sub: 'Apariencia', run: () => void openThemes() },
+    ...allThemes().map((t) => ({ label: `Tema: ${t.name}`, sub: 'Apariencia', run: async () => {
+      state.settings = await api.settings.save({ theme: t.id });
+      applyUiTheme(t);
+      for (const x of state.tabs) x.applySettings(state.settings!);
+    } })),
+    { label: 'Plugins…', sub: 'Acción', run: () => void pluginsDialog(pluginHost) },
+    ...pluginHost.commands().map((c) => ({ label: c.label, sub: `Plugin: ${c.pluginName}`, run: c.run })),
+    { label: 'Sincronizar sesiones entre equipos…', sub: 'Acción', run: () => void openSync() },
+    { label: 'Despliegue masivo a switches y routers…', sub: 'Red', run: () => void openNetops('deploy') },
+    { label: 'Plantillas de configuración…', sub: 'Red', run: () => void openNetops('templates') },
+    { label: 'Respaldos de configuración…', sub: 'Red', run: () => void openNetops('backups') },
     { label: 'Acerca de Nexus Neo', sub: 'Ayuda', run: () => void aboutDialog(state.info!) },
     { label: 'Importar ~/.ssh/config', sub: 'Acción', run: () => void importSessions('ssh-config') },
     ...state.macros.map((m) => ({ label: `Ejecutar macro: ${m.name}`, sub: 'Macro', run: () => void playMacro(m) })),
@@ -750,6 +776,31 @@ function openKeys(): Promise<void> {
   return keysDialog(t ? { connId: t.connId, title: t.title, isSsh: t.session.kind === 'ssh' && t.state === 'connected' } : null);
 }
 
+async function openSync(): Promise<void> {
+  await refreshVault();
+  const cfg = await syncDialog(state.settings!, state.sessions, state.vault.unlocked);
+  if (cfg) state.settings = { ...state.settings!, sync: cfg };
+  void updateSyncButton();
+}
+
+async function openNetops(tab: 'deploy' | 'templates' | 'backups'): Promise<void> {
+  await refreshVault();
+  state.settings = await api.settings.get();
+  await netopsDialog(state.settings!, state.vault.unlocked, tab);
+}
+
+api.onToast((msg: string, kind: 'info' | 'ok' | 'error') => toast(msg, kind));
+
+async function updateSyncButton(): Promise<void> {
+  const st = await api.sync.status();
+  const b = $('#btn-sync');
+  b.classList.toggle('active', st.configured);
+  b.classList.toggle('warn', !!st.lastError);
+  b.title = st.configured
+    ? `Sincronización cifrada${st.lastSync ? ` · última: ${new Date(st.lastSync).toLocaleTimeString()}` : ''}${st.lastError ? ` · error: ${st.lastError}` : ''}`
+    : 'Sincronización cifrada entre equipos (sin configurar)';
+}
+
 async function openLocal(): Promise<void> {
   await openSession({ id: `local-${uid()}`, name: 'Local', folder: '', kind: 'local' });
 }
@@ -770,7 +821,7 @@ function renderWelcome(): void {
     el('div', { class: 'welcome-inner' },
       el('div', { class: 'logo-big' }, logo(64), el('div', {}, el('h1', {}, 'Nexus Neo'), el('p', {}, 'Tu centro de acceso remoto: SSH, SFTP, Telnet, serie, túneles y más.'))),
       el('div', { class: 'welcome-actions' },
-        el('button', { class: 'card-btn', onclick: () => void newSession() }, icon('plus', 22), el('strong', {}, 'Nueva sesión'), el('small', {}, 'SSH, Telnet, serie, RDP, VNC…')),
+        el('button', { class: 'card-btn', onclick: () => void newSession() }, icon('plus', 22), el('strong', {}, 'Nueva sesión'), el('small', {}, 'SSH, Mosh, Telnet, serie, RDP, VNC…')),
         el('button', { class: 'card-btn', onclick: () => void openLocal() }, icon('terminal', 22), el('strong', {}, 'Terminal local'), el('small', {}, 'Ctrl+Mayús+T')),
         el('button', { class: 'card-btn', onclick: () => void importSessions('ssh-config') }, icon('import', 22), el('strong', {}, 'Importar ~/.ssh/config'), el('small', {}, 'Trae tus hosts existentes')),
         el('button', { class: 'card-btn', onclick: () => void palette() }, icon('search', 22), el('strong', {}, 'Ir a…'), el('small', {}, 'Ctrl+Mayús+K')),
@@ -821,6 +872,8 @@ function buildLayout(): void {
         tbtn('btn-tunnels', 'tunnel', 'Túneles SSH', () => void tunnelsDialog(), el('span', { id: 'tunnel-count', class: 'badge' })),
         tbtn('btn-servers', 'server', 'Servidores TFTP / FTP / HTTP / Syslog (Ctrl+Mayús+E)', () => void serversPanel.toggle(), el('span', { id: 'servers-count', class: 'badge' })),
         tbtn('btn-keys', 'key', 'Claves SSH', () => void openKeys()),
+        tbtn('btn-netops', 'network', 'Operaciones de red: despliegue masivo, plantillas y respaldos', () => void openNetops('deploy')),
+        tbtn('btn-sync', 'cloud', 'Sincronización cifrada entre equipos', () => void openSync()),
         tbtn('btn-vault', 'lock', 'Bóveda', () => void vaultDialog()),
         tbtn('btn-settings', 'settings', 'Ajustes', () => void settingsDialog()),
         tbtn('btn-about', 'info', 'Acerca de Nexus Neo', () => void aboutDialog(state.info!)),
@@ -844,7 +897,7 @@ function buildLayout(): void {
         ),
         serversPanel.root,
       ),
-      el('footer', { id: 'statusbar' }, el('span', { id: 'status-left' }), el('span', { class: 'spacer' }), el('span', { id: 'status-right' })),
+      el('footer', { id: 'statusbar' }, el('span', { id: 'status-left' }), el('span', { class: 'spacer' }), el('span', { id: 'status-plugins' }), el('span', { id: 'status-right' })),
     ),
   );
 }
@@ -881,6 +934,41 @@ function bindShortcuts(): void {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Plugins
+
+const pluginStatus = new Map<string, string>();
+const pluginHost = new PluginHost({
+  activeTab: () => (state.active ? { connId: state.active.connId, title: state.active.title } : null),
+  write: (connId, data) => api.conn.write(connId, data),
+  notify: (msg, kind) => toast(msg, kind),
+  prompt: (title, label) => promptDialog(title, label),
+  registerTheme: (t) => {
+    addPluginTheme(t);
+    if (state.settings?.theme === t.id) applyUiTheme(themeById(t.id));
+  },
+  listSessions: () => state.sessions.map((x) => ({ name: x.name, kind: x.kind, host: x.host, folder: x.folder })),
+  setStatus: (id, text) => {
+    if (text) pluginStatus.set(id, text);
+    else pluginStatus.delete(id);
+    const elx = document.getElementById('status-plugins');
+    if (elx) elx.textContent = [...pluginStatus.values()].join(' · ');
+  },
+  storageGet: (id, key) => api.plugins.storageGet(id, key),
+  storageSet: (id, key, value) => api.plugins.storageSet(id, key, value),
+  commandsChanged: () => undefined,
+  log: (id, msg) => console.warn(`[plugin ${id}] ${msg}`),
+});
+
+async function openThemes(): Promise<void> {
+  const id = await themeEditor(state.settings!.theme);
+  if (id) {
+    state.settings = await api.settings.save({ theme: id });
+    for (const t of state.tabs) t.applySettings(state.settings!);
+  }
+  applyUiTheme(themeById(state.settings!.theme));
+}
+
 async function main(): Promise<void> {
   buildLayout();
   bindShortcuts();
@@ -891,17 +979,36 @@ async function main(): Promise<void> {
   state.macros = macros;
   document.body.classList.add(`platform-${info.platform}`);
   $('#status-right').textContent = `Nexus Neo ${info.version}`;
+  await refreshCustomThemes();
   applyUiTheme(themeById(settings.theme));
   renderSidebar();
   renderWelcome();
   if (!(await ensureDisclaimerAccepted(settings))) return;
 
-  api.conn.onData((id: string, data: string) => state.tabs.find((t) => t.connId === id)?.receive(data));
+  api.conn.onData((id: string, data: string) => {
+    const tab = state.tabs.find((t) => t.connId === id);
+    tab?.receive(data);
+    if (tab) pluginHost.output(id, tab.title, data);
+  });
+  void startPlugins(pluginHost).then(() => {
+    // Un tema aportado por un plugin puede ser el elegido.
+    applyUiTheme(themeById(state.settings!.theme));
+    for (const t of state.tabs) t.applySettings(state.settings!);
+  });
   api.conn.onState((id: string, s: Tab['state'], msg?: string) => state.tabs.find((t) => t.connId === id)?.setState(s, msg));
   api.tunnels.onChanged((l: typeof state.tunnels) => {
     state.tunnels = l;
     updateToolbar();
   });
+  api.sync.onApplied(async (st: { added: number; updated: number; removed: number }) => {
+    state.macros = await api.macros.list();
+    await refreshCustomThemes();
+    await reloadSessions();
+    const n = st.added + st.updated + st.removed;
+    if (n) toast(`Sincronización: ${st.added} nuevas, ${st.updated} actualizadas, ${st.removed} eliminadas`, 'ok');
+  });
+  api.sync.onStatus(() => void updateSyncButton());
+  void updateSyncButton();
   api.vault.onLocked(() => {
     void refreshVault();
     toast('La bóveda se ha bloqueado por inactividad');

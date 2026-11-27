@@ -1,0 +1,29 @@
+:root { --bg: #0b0f14; --panel: #151b23; --border: #263140; --text: #d8e0ea; --muted: #7d8a9c; --accent: #2dd4bf; --danger: #f87171; }
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px system-ui, 'Segoe UI', sans-serif; overflow: hidden; }
+#bar { display: flex; align-items: center; gap: 6px; padding: 6px 10px; background: var(--panel); border-bottom: 1px solid var(--border); height: 41px; }
+#bar .title { font-weight: 600; margin-right: 8px; }
+#bar .target { color: var(--muted); font-family: monospace; font-size: 12px; }
+#bar .spacer { flex: 1; }
+#bar button { height: 28px; padding: 0 10px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: var(--text); cursor: pointer; }
+#bar button:hover { border-color: var(--accent); }
+#bar button.active { color: var(--accent); border-color: var(--accent); }
+#bar button:disabled { opacity: .4; cursor: default; }
+#status { color: var(--muted); font-size: 12px; }
+#status.ok { color: #4ade80; }
+#status.err { color: var(--danger); }
+#screen { position: absolute; top: 41px; left: 0; right: 0; bottom: 0; display: flex; }
+#screen iron-remote-desktop { flex: 1; display: flex; }
+#overlay { position: absolute; inset: 41px 0 0 0; display: grid; place-items: center; background: rgb(0 0 0 / .6); }
+#overlay.hidden { display: none; }
+#overlay .box { padding: 18px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; width: 380px; display: grid; gap: 8px; }
+#overlay .box p { margin: 0; color: var(--muted); line-height: 1.4; }
+#overlay pre { margin: 0; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 12px; white-space: pre-wrap; word-break: break-all; }
+#overlay label { display: grid; gap: 4px; color: var(--muted); font-size: 12px; }
+#overlay label.check { display: flex; align-items: center; gap: 6px; }
+#overlay input[type=text], #overlay input[type=password] { width: 100%; padding: 7px 9px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; }
+#overlay .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px; }
+#overlay button { height: 30px; padding: 0 14px; border-radius: 6px; cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--text); }
+#overlay .primary { background: var(--accent); color: #031a17; border: none; font-weight: 600; }
+#overlay .danger { background: var(--danger); color: #1a0505; border: none; font-weight: 600; }
+.danger-text { color: var(--danger) !important; }

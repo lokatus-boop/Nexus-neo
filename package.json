@@ -1,7 +1,7 @@
 {
   "name": "nexus-neo",
-  "version": "0.1.2",
-  "description": "Cliente de acceso remoto multiplataforma: SSH, SFTP, Telnet, serie, túneles, X11, multi-ejecución y macros.",
+  "version": "0.2.0",
+  "description": "Cliente de acceso remoto multiplataforma: SSH, SFTP, Telnet, Mosh, RDP, VNC, serie, túneles, X11, despliegue masivo y respaldos de equipos de red.",
   "main": "dist/main.js",
   "scripts": {
     "build": "node scripts/build.mjs",
@@ -21,14 +21,18 @@
   },
   "license": "MIT",
   "dependencies": {
+    "@devolutions/iron-remote-desktop": "^0.12.0",
+    "@devolutions/iron-remote-desktop-rdp": "^0.8.0",
     "@novnc/novnc": "^1.6.0",
     "node-pty": "^1.1.0",
     "serialport": "^13.0.0",
-    "ssh2": "^1.17.0"
+    "ssh2": "^1.17.0",
+    "ws": "^8.23.0"
   },
   "devDependencies": {
     "@types/node": "^26.6.11",
     "@types/ssh2": "^1.15.6",
+    "@types/ws": "^8.18.2",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-search": "^0.16.0",
     "@xterm/addon-web-links": "^0.12.0",
@@ -64,7 +68,7 @@
       ],
       "category": "Network",
       "icon": "build/icons",
-      "synopsis": "Cliente de acceso remoto: SSH, SFTP, Telnet, serie, túneles, VNC",
+      "synopsis": "Cliente de acceso remoto: SSH, SFTP, Telnet, Mosh, RDP, VNC, serie y túneles",
       "syncDesktopName": true
     },
     "win": {

@@ -62,10 +62,21 @@ const configs = [
     format: 'iife',
     plugins: [novncTla],
   },
+  {
+    ...common,
+    entryPoints: ['src/renderer/rdp.ts'],
+    outfile: 'dist/renderer/rdp.js',
+    platform: 'browser',
+    target: 'chrome120',
+    format: 'iife',
+    // El cliente IronRDP lleva el WebAssembly incrustado (~5 MB); no tiene sentido el mapa de fuentes.
+    sourcemap: false,
+  },
 ];
 
 cpSync('src/renderer/index.html', 'dist/renderer/index.html');
 cpSync('src/renderer/vnc.html', 'dist/renderer/vnc.html');
+cpSync('src/renderer/rdp.html', 'dist/renderer/rdp.html');
 // Logotipo para la interfaz e icono de ventana (los instaladores usan build/icon.ico y build/icons/).
 cpSync('build/icon.svg', 'dist/renderer/logo.svg');
 cpSync('build/icons/256x256.png', 'dist/icon.png');

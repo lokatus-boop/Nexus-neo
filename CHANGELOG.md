@@ -1,5 +1,32 @@
 # Cambios
 
+## 0.2.0
+
+- **Visor RDP integrado** en ventana propia (IronRDP en WebAssembly con una pasarela local): NLA/CredSSP y
+  TLS con verificación del certificado (aviso si cambia), resolución dinámica, ajustar a la ventana,
+  Ctrl+Alt+Supr, tecla Windows, portapapeles, pantalla completa, reconexión, credenciales en la bóveda y túnel
+  SSH opcional. El cliente del sistema sigue disponible por sesión o en Ajustes.
+- **Mosh**: nuevo tipo de sesión con cliente propio (sin instalar nada en el equipo local). Entra por SSH,
+  arranca `mosh-server` y sigue por UDP cifrado (AES-128-OCB); aguanta cambios de red y cortes.
+  `mosh://usuario@host` en la conexión rápida.
+- **Sincronización cifrada entre equipos** de sesiones, macros, plantillas y temas a través de una carpeta
+  compartida o SFTP. Un único archivo cifrado con tu frase (scrypt + AES-256-GCM), gana el cambio más reciente,
+  los borrados se propagan y las contraseñas de la bóveda son opcionales.
+- **Operaciones de red** (nuevo botón en la barra):
+  - **Despliegue masivo** de órdenes con variables y directivas en muchos equipos por SSH o Telnet, con
+    enable, paginadores, preguntas, detección de errores, subida previa de firmware por SCP o SFTP y
+    resultados por equipo (registro, `resumen.csv` y `resumen.json`).
+  - **Plantillas de configuración** con variables por equipo desde CSV, vista previa, generación de `.cfg` y
+    aplicación con el despliegue.
+  - **Respaldos de configuración** con 13 perfiles de fabricante, copia sólo si cambia, historial,
+    comparación entre versiones y respaldo programado.
+- **Temas personalizables**: editor con vista previa en vivo y aviso de contraste, importación de esquemas de
+  Windows Terminal e iTerm2 y exportación a JSON.
+- **Plugins** aislados en Web Workers con permisos (`terminal:read`, `terminal:write`, `sessions:read`):
+  comandos en la paleta, salida del terminal, avisos, barra de estado, temas y almacenamiento propio. Plugin de
+  ejemplo en `examples/plugins/`.
+- **Documentación**: manual de usuario completo en `docs/manual.md` y guía de plugins en `docs/plugins.md`.
+
 ## 0.1.2
 
 - **Icono nuevo** original: una «N» trazada como un grafo de nodos conectados con degradado turquesa-violeta y
