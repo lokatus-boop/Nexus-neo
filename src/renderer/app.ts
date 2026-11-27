@@ -8,6 +8,8 @@ import { parseQuickConnect } from './quick-connect';
 import { parseMacro, runMacro, encodeRecording } from './macro-engine';
 import { THEMES, themeById, applyUiTheme } from './themes';
 import { ServersPanel } from './servers-panel';
+import { aboutDialog, ensureDisclaimerAccepted, logo } from './about';
+import { AUTHOR } from '../shared/legal';
 import { keysDialog } from './keys-dialog';
 
 const serversPanel = new ServersPanel();
@@ -19,6 +21,7 @@ interface AppInfo {
   shells: { id: string; name: string; command: string }[];
   dataDir: string;
   home: string;
+  versions?: { electron: string; chrome: string; node: string };
 }
 
 const state = {
@@ -680,6 +683,7 @@ async function palette(): Promise<void> {
     { label: 'Claves SSH (generar / instalar)…', sub: 'Acción', run: () => void openKeys() },
     { label: 'Servidores TFTP / FTP / HTTP / Syslog', sub: 'Acción', run: () => void serversPanel.toggle(true) },
     { label: 'Ajustes…', sub: 'Acción', run: () => void settingsDialog() },
+    { label: 'Acerca de Nexus Neo', sub: 'Ayuda', run: () => void aboutDialog(state.info!) },
     { label: 'Importar ~/.ssh/config', sub: 'Acción', run: () => void importSessions('ssh-config') },
     ...state.macros.map((m) => ({ label: `Ejecutar macro: ${m.name}`, sub: 'Macro', run: () => void playMacro(m) })),
     ...state.tabs.map((t) => ({ label: `Ir a pestaña: ${t.title}`, sub: 'Pestaña', run: () => activate(t) })),
@@ -764,7 +768,7 @@ function renderWelcome(): void {
   const recent = state.sessions.slice(0, 8);
   $('#welcome').replaceChildren(
     el('div', { class: 'welcome-inner' },
-      el('div', { class: 'logo-big' }, el('span', { class: 'logo-mark' }, 'N'), el('div', {}, el('h1', {}, 'Nexus Neo'), el('p', {}, 'Tu centro de acceso remoto: SSH, SFTP, Telnet, serie, túneles y más.'))),
+      el('div', { class: 'logo-big' }, logo(64), el('div', {}, el('h1', {}, 'Nexus Neo'), el('p', {}, 'Tu centro de acceso remoto: SSH, SFTP, Telnet, serie, túneles y más.'))),
       el('div', { class: 'welcome-actions' },
         el('button', { class: 'card-btn', onclick: () => void newSession() }, icon('plus', 22), el('strong', {}, 'Nueva sesión'), el('small', {}, 'SSH, Telnet, serie, RDP, VNC…')),
         el('button', { class: 'card-btn', onclick: () => void openLocal() }, icon('terminal', 22), el('strong', {}, 'Terminal local'), el('small', {}, 'Ctrl+Mayús+T')),
@@ -776,6 +780,9 @@ function renderWelcome(): void {
       el('div', { class: 'shortcuts' },
         ...[['Ctrl+Mayús+D', 'Vista dividida'], ['Ctrl+Mayús+E', 'Servidores'], ['Ctrl+Mayús+T', 'Terminal local'], ['Ctrl+Mayús+W', 'Cerrar pestaña'], ['Ctrl+Tab', 'Siguiente pestaña'], ['Ctrl+Mayús+M', 'Multi-ejecución'], ['Ctrl+Mayús+F', 'Buscar'], ['Ctrl+Mayús+B', 'Panel lateral'], ['Ctrl+Mayús+S', 'Panel SFTP'], ['Ctrl+ +/-', 'Zoom']]
           .map(([k, d]) => el('div', {}, el('kbd', {}, k), el('span', {}, d)))),
+      el('p', { class: 'welcome-foot' },
+        `Nexus Neo ${state.info?.version ?? ''} · Hecho por ${AUTHOR} · `,
+        el('a', { href: '#', onclick: (e: Event) => { e.preventDefault(); void aboutDialog(state.info!); } }, 'Acerca de y aviso legal')),
     ),
   );
 }
@@ -800,7 +807,7 @@ function buildLayout(): void {
   document.body.append(
     el('div', { id: 'app' },
       el('header', { id: 'toolbar' },
-        el('div', { class: 'brand' }, el('span', { class: 'logo-mark sm' }, 'N'), el('span', {}, 'Nexus Neo')),
+        el('div', { class: 'brand' }, logo(24), el('span', {}, 'Nexus Neo')),
         tbtn('btn-sidebar', 'sidebar', 'Mostrar/ocultar sesiones (Ctrl+Mayús+B)', () => document.body.classList.toggle('no-sidebar')),
         tbtn('btn-new', 'plus', 'Nueva sesión', () => void newSession()),
         tbtn('btn-local', 'terminal', 'Terminal local (Ctrl+Mayús+T)', () => void openLocal()),
@@ -816,6 +823,7 @@ function buildLayout(): void {
         tbtn('btn-keys', 'key', 'Claves SSH', () => void openKeys()),
         tbtn('btn-vault', 'lock', 'Bóveda', () => void vaultDialog()),
         tbtn('btn-settings', 'settings', 'Ajustes', () => void settingsDialog()),
+        tbtn('btn-about', 'info', 'Acerca de Nexus Neo', () => void aboutDialog(state.info!)),
       ),
       el('div', { id: 'main' },
         el('aside', { id: 'sidebar' },
@@ -886,6 +894,7 @@ async function main(): Promise<void> {
   applyUiTheme(themeById(settings.theme));
   renderSidebar();
   renderWelcome();
+  if (!(await ensureDisclaimerAccepted(settings))) return;
 
   api.conn.onData((id: string, data: string) => state.tabs.find((t) => t.connId === id)?.receive(data));
   api.conn.onState((id: string, s: Tab['state'], msg?: string) => state.tabs.find((t) => t.connId === id)?.setState(s, msg));

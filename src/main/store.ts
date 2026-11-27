@@ -22,6 +22,7 @@ export const DEFAULT_SETTINGS: Settings = {
   logDir: '',
   logStripAnsi: true,
   autoReconnect: true,
+  disclaimerAccepted: 0,
 };
 
 class JsonFile<T> {

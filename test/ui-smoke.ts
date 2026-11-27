@@ -45,9 +45,27 @@ async function main() {
   const errors: string[] = [];
   page.on('pageerror', (e: Error) => errors.push(e.message));
   await page.setViewportSize({ width: 1400, height: 860 });
+  // Primer arranque: aviso legal con aceptación obligatoria.
+  await page.waitForSelector('.modal .first-run');
+  const acceptBtn = page.locator('.modal button:has-text("Aceptar y continuar")');
+  if (!(await acceptBtn.isDisabled())) throw new Error('El aviso se puede aceptar sin marcar la casilla');
+  await page.screenshot({ path: join(shots, '10-aviso-legal.png') });
+  await page.check('.modal .first-run input[type=checkbox]');
+  await acceptBtn.click();
+  await page.waitForSelector('.modal', { state: 'detached' });
+  if (!JSON.parse(readFileSync(join(dataDir, 'settings.json'), 'utf8')).disclaimerAccepted) throw new Error('No se guardó la aceptación del aviso');
+  console.log('✔ aviso legal en el primer arranque');
+
   await page.waitForSelector('#welcome .card-btn');
   await page.screenshot({ path: join(shots, '01-bienvenida.png') });
   console.log('✔ pantalla de bienvenida');
+
+  await page.click('#btn-about');
+  await page.waitForSelector('.modal .about-author:has-text("Luismi Sanz")');
+  await page.screenshot({ path: join(shots, '11-acerca-de.png') });
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('.modal', { state: 'detached' });
+  console.log('✔ acerca de');
 
   // Terminal local
   await page.keyboard.press('Control+Shift+T');
