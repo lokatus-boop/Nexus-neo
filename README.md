@@ -13,7 +13,7 @@ alternativa moderna y abierta a las «navajas suizas» de terminal para administ
 
 ## Funcionalidades
 
-### Disponibles en la versión 0.1
+### Disponibles en la versión 0.1.1
 
 | Área | Qué incluye |
 | --- | --- |
@@ -31,7 +31,7 @@ alternativa moderna y abierta a las «navajas suizas» de terminal para administ
 | **RDP** | Se abre con el cliente del sistema (`mstsc`, `xfreerdp` o el que configures). |
 | **Vista dividida** | Una, dos (en columnas o filas) o cuatro sesiones a la vez en la misma ventana (`Ctrl+Mayús+D` cambia la disposición); clic en un panel para enfocarlo. |
 | **Registro de sesiones** | Guarda automáticamente la salida de todas las sesiones o sólo de las marcadas, en una carpeta por día, con opción de quitar los códigos de color. |
-| **Claves SSH** | Generador de claves ed25519, RSA y ECDSA (con frase de paso opcional), lista de claves de `~/.ssh` con huella SHA256 e **instalación de la clave pública en `authorized_keys`** de un servidor con un clic. |
+| **Claves SSH** | Generador de claves ed25519, RSA y ECDSA (con frase de paso opcional), lista de claves de `~/.ssh` con huella SHA256 e **instalación de la clave pública en `authorized_keys`** de un servidor con un clic. **Importación de claves** (por ejemplo las que descargas de Oracle Cloud o AWS) a `~/.ssh` y **corrección automática de permisos**: en Windows ajusta la ACL para que sólo tu usuario pueda leer la clave, así `ssh -i`, scp o git no la rechazan con «UNPROTECTED PRIVATE KEY FILE». |
 | **Reconexión automática** | Si una sesión SSH o Telnet se cae, reintenta sola hasta 5 veces con espera creciente; también manualmente con `R`. |
 | **Servidores integrados** | Panel lateral (`Ctrl+Mayús+E`) con **TFTP** (blksize/tsize, subida y bajada), **FTP** (pasivo/activo, usuario o anónimo), **HTTP** (listados, descargas reanudables, PUT opcional) y **Syslog** (UDP/TCP, colores por severidad y archivo diario). Arranque con un clic, carpeta raíz, puerto e interfaz configurables, IPs del equipo a mano y registro de transferencias en vivo. Ideal para actualizar firmware y guardar configuraciones de switches, routers y AP. |
 | **Multi-ejecución** | Escribe a la vez en todas las pestañas marcadas (casilla en cada pestaña). |

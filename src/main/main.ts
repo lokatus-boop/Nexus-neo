@@ -15,6 +15,7 @@ import { launchExternal } from './protocols/external';
 import * as sftpOps from './sftp-ops';
 import { SessionLogger } from './session-log';
 import { generateKey, installPublicKey, listKeys, sshDir, KeyType } from './keys';
+import { checkKeyPermissions, importKeyFile, protectKeyFile } from './key-perms';
 import { ServerManager, defaultServers, listInterfaces } from './servers/manager';
 import { buildNexusExport, parseNexusExport, parseSshConfig } from './importers';
 import type { AuthPrompt, HostKeyPrompt, Macro, OpenRequest, SecretEntry, ServerConfig, SessionConfig, Settings, TunnelConfig } from '../shared/types';
@@ -435,6 +436,16 @@ function registerIpc(): void {
     return generateKey({ ...o, path: join(sshDir(), o.name) });
   });
   handle('keys:install', async (connId: string, publicKey: string) => installPublicKey(await sshConn(connId).sftp(), publicKey));
+  handle('keys:checkPerms', (path: string) => checkKeyPermissions(path));
+  handle('keys:fixPerms', (path: string) => protectKeyFile(path));
+  handle('keys:import', async (src?: string, overwrite?: boolean) => {
+    if (!src) {
+      const r = await dialog.showOpenDialog(win!, { title: 'Importar clave privada', defaultPath: homedir(), properties: ['openFile', 'showHiddenFiles'] });
+      if (r.canceled || !r.filePaths[0]) return null;
+      src = r.filePaths[0];
+    }
+    return importKeyFile(src, sshDir(), { overwrite });
+  });
   handle('keys:openDir', async () => {
     await fs.mkdir(sshDir(), { recursive: true, mode: 0o700 });
     return shell.openPath(sshDir());

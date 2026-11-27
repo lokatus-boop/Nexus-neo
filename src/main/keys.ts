@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { promises as fs, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, basename } from 'node:path';
+import { checkKeyPermissionsMany, protectKeyFile } from './key-perms';
 
 export type KeyType = 'ed25519' | 'rsa' | 'ecdsa';
 
@@ -15,6 +16,10 @@ export interface KeyInfo {
   fingerprint: string;
   comment: string;
   encrypted: boolean;
+  /** Los permisos del archivo privado son aceptables para OpenSSH (undefined = no se pudo comprobar). */
+  permsOk?: boolean;
+  /** Quién más puede leer la clave, si permsOk es false. */
+  permsIssue?: string;
 }
 
 export function sshDir(): string {
@@ -64,7 +69,16 @@ export async function generateKey(opts: { type: KeyType; bits?: number; comment?
   await fs.mkdir(join(opts.path, '..'), { recursive: true, mode: 0o700 });
   await fs.writeFile(opts.path, pair.private, { mode: 0o600 });
   await fs.writeFile(`${opts.path}.pub`, pair.public.trim() + '\n', { mode: 0o644 });
-  return describe(opts.path, pair.public.trim(), !!opts.passphrase);
+  const info = describe(opts.path, pair.public.trim(), !!opts.passphrase);
+  // En Windows el modo 0600 no tiene efecto: se ajusta la ACL para que `ssh -i` la acepte.
+  try {
+    await protectKeyFile(opts.path);
+    info.permsOk = true;
+  } catch (e) {
+    info.permsOk = false;
+    info.permsIssue = (e as Error).message;
+  }
+  return info;
 }
 
 function describe(privatePath: string, pub: string, encrypted: boolean): KeyInfo {
@@ -93,6 +107,18 @@ export async function listKeys(dir = sshDir()): Promise<KeyInfo[]> {
     } catch {
       /* archivo no válido */
     }
+  }
+  const withPriv = out.filter((k) => existsSync(k.privatePath));
+  try {
+    const perms = await checkKeyPermissionsMany(withPriv.map((k) => k.privatePath));
+    for (const k of withPriv) {
+      const r = perms.get(k.privatePath);
+      if (!r || r instanceof Error) continue;
+      k.permsOk = r.ok;
+      if (!r.ok) k.permsIssue = [...r.offenders, ...(r.badOwner ? [`propietario ${r.badOwner}`] : [])].join(', ');
+    }
+  } catch {
+    /* sin información de permisos */
   }
   return out;
 }
