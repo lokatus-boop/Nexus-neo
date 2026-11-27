@@ -137,7 +137,10 @@ export class Tab {
     }
   }
 
-  async reconnect(): Promise<void> {
+  async reconnect(auto = false): Promise<void> {
+    window.clearTimeout(this.retryTimer);
+    if (!auto) this.attempts = 0;
+    if (this.disposed) return;
     await api.conn.close(this.connId);
     this.sftp?.destroy();
     this.sftp = null;
@@ -147,13 +150,51 @@ export class Tab {
     await this.connect();
   }
 
+  private dropped = false;
+  private attempts = 0;
+  private retryTimer: number | undefined;
+  private disposed = false;
+
+  private canAutoReconnect(): boolean {
+    return !this.disposed && this.host.settings().autoReconnect && ['ssh', 'telnet'].includes(this.session.kind);
+  }
+
+  private scheduleReconnect(): void {
+    if (!this.canAutoReconnect()) return;
+    if (this.attempts >= 5) {
+      this.attempts = 0;
+      this.term.write('\r\n\x1b[31m— No se pudo reconectar tras 5 intentos. Pulsa R para reintentar. —\x1b[0m\r\n');
+      return;
+    }
+    this.attempts++;
+    const delay = Math.min(2 ** this.attempts, 30);
+    this.term.write(`\r\n\x1b[33m— Conexión perdida. Reconectando en ${delay} s (intento ${this.attempts}/5). Pulsa R para reconectar ya. —\x1b[0m\r\n`);
+    window.clearTimeout(this.retryTimer);
+    this.retryTimer = window.setTimeout(() => void this.reconnect(true), delay * 1000);
+  }
+
   setState(state: ConnState, msg?: string): void {
+    const prev = this.state;
+    if (state === 'connected') {
+      this.attempts = 0;
+      this.dropped = false;
+    }
+    // Un error con la sesión ya abierta es una caída de red (no un "exit" del usuario).
+    if (state === 'error' && prev === 'connected') this.dropped = true;
     this.state = state;
     this.tabEl.dataset.state = state;
     const labels: Record<ConnState, string> = { connecting: 'Conectando…', connected: 'Conectado', closed: 'Desconectado', error: 'Error' };
     this.statusEl.textContent = `${labels[state]}${msg ? ' — ' + msg : ''} · ${this.describe()}`;
     if (state === 'closed' || state === 'error') this.stopMonitor();
-    if (state === 'closed') this.term.write('\r\n\x1b[90m— Sesión cerrada. Pulsa R para reconectar. —\x1b[0m\r\n');
+    if (state === 'closed') {
+      if (this.dropped) {
+        this.dropped = false;
+        this.scheduleReconnect();
+      } else this.term.write('\r\n\x1b[90m— Sesión cerrada. Pulsa R para reconectar. —\x1b[0m\r\n');
+    } else if (state === 'error' && this.attempts > 0 && prev === 'connecting') {
+      // Falló un intento de reconexión automática: se programa el siguiente.
+      this.scheduleReconnect();
+    }
     this.host.onStateChange(this);
   }
 
@@ -174,13 +215,17 @@ export class Tab {
     this.broadcastBox.style.display = v ? '' : 'none';
   }
 
-  show(active: boolean): void {
-    this.pane.classList.toggle('hidden', !active);
-    this.tabEl.classList.toggle('active', active);
-    if (active) {
+  /** Muestra/oculta el panel. En vista dividida puede estar visible sin tener el foco. */
+  display(visible: boolean, focused: boolean, cell = 0): void {
+    this.pane.classList.toggle('hidden', !visible);
+    this.pane.classList.toggle('focused', focused);
+    this.pane.style.order = String(cell);
+    this.tabEl.classList.toggle('active', focused);
+    this.tabEl.classList.toggle('in-view', visible && !focused);
+    if (visible) {
       requestAnimationFrame(() => {
         this.doFit();
-        this.term.focus();
+        if (focused) this.term.focus();
       });
     }
   }
@@ -276,7 +321,7 @@ export class Tab {
       return false;
     }
     // Deja pasar los atajos globales de la aplicación.
-    if (mod && ['KeyT', 'KeyW', 'KeyK', 'KeyB', 'KeyM', 'KeyS', 'KeyE'].includes(e.code)) return false;
+    if (mod && ['KeyT', 'KeyW', 'KeyK', 'KeyB', 'KeyM', 'KeyS', 'KeyE', 'KeyD'].includes(e.code)) return false;
     if (e.ctrlKey && e.key === 'Tab') return false;
     return true;
   }
@@ -307,6 +352,8 @@ export class Tab {
   }
 
   dispose(): void {
+    this.disposed = true;
+    window.clearTimeout(this.retryTimer);
     this.stopMonitor();
     this.ro.disconnect();
     this.sftp?.destroy();

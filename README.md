@@ -9,9 +9,11 @@ alternativa moderna y abierta a las «navajas suizas» de terminal para administ
 
 ![Servidores TFTP, FTP, HTTP y Syslog integrados](docs/screenshots/07-servidores.png)
 
+![Vista dividida en cuatro paneles](docs/screenshots/08-vista-dividida.png)
+
 ## Funcionalidades
 
-### Disponibles en la versión 0.1 (MVP)
+### Disponibles en la versión 0.1
 
 | Área | Qué incluye |
 | --- | --- |
@@ -25,7 +27,12 @@ alternativa moderna y abierta a las «navajas suizas» de terminal para administ
 | **Terminal local** | Detección automática de shells: PowerShell 7, Windows PowerShell, CMD, WSL y Git Bash en Windows; los de `/etc/shells` en Linux. |
 | **Telnet** | Con negociación de eco, SGA, tamaño de ventana (NAWS) y tipo de terminal. |
 | **Puerto serie** | Lista de puertos detectados, baudios, bits de datos/parada, paridad y eco local. |
-| **RDP / VNC** | Se abren con el cliente del sistema (`mstsc`, `xfreerdp`, `vncviewer` o el que configures). |
+| **Visor VNC integrado** | Ventana propia basada en noVNC: conexión directa o **a través de un túnel SSH** de una sesión guardada, escalado, sólo lectura, `Ctrl+Alt+Supr`, envío del portapapeles, pantalla completa y contraseña guardada en la bóveda. Opcionalmente se puede usar un visor externo. |
+| **RDP** | Se abre con el cliente del sistema (`mstsc`, `xfreerdp` o el que configures). |
+| **Vista dividida** | Una, dos (en columnas o filas) o cuatro sesiones a la vez en la misma ventana (`Ctrl+Mayús+D` cambia la disposición); clic en un panel para enfocarlo. |
+| **Registro de sesiones** | Guarda automáticamente la salida de todas las sesiones o sólo de las marcadas, en una carpeta por día, con opción de quitar los códigos de color. |
+| **Claves SSH** | Generador de claves ed25519, RSA y ECDSA (con frase de paso opcional), lista de claves de `~/.ssh` con huella SHA256 e **instalación de la clave pública en `authorized_keys`** de un servidor con un clic. |
+| **Reconexión automática** | Si una sesión SSH o Telnet se cae, reintenta sola hasta 5 veces con espera creciente; también manualmente con `R`. |
 | **Servidores integrados** | Panel lateral (`Ctrl+Mayús+E`) con **TFTP** (blksize/tsize, subida y bajada), **FTP** (pasivo/activo, usuario o anónimo), **HTTP** (listados, descargas reanudables, PUT opcional) y **Syslog** (UDP/TCP, colores por severidad y archivo diario). Arranque con un clic, carpeta raíz, puerto e interfaz configurables, IPs del equipo a mano y registro de transferencias en vivo. Ideal para actualizar firmware y guardar configuraciones de switches, routers y AP. |
 | **Multi-ejecución** | Escribe a la vez en todas las pestañas marcadas (casilla en cada pestaña). |
 | **Macros** | Editor de macros con escapes (`\n`, `\t`, `\e`, `\xHH`) y pausas `{sleep:ms}`, **grabación** de lo que tecleas, ejecución en una pestaña o en todas las de multi-ejecución, y macro de arranque por sesión. |
@@ -41,6 +48,8 @@ alternativa moderna y abierta a las «navajas suizas» de terminal para administ
 - Importación directa de `~/.ssh/config`, incluidos bastiones y túneles.
 - Edición de archivos remotos desde el panel SFTP sin herramientas externas.
 - Grabación de macros y pausas temporizadas.
+- Visor VNC que puede ir por un túnel SSH sin configurar reenvíos a mano.
+- Instalación de claves públicas en servidores desde la propia app.
 - Paleta de comandos y conexión rápida tipo URI.
 - Advertencia explícita ante cambios de clave de host.
 - Bóveda con cifrado autenticado (detecta manipulaciones del archivo) y autobloqueo.
@@ -48,17 +57,18 @@ alternativa moderna y abierta a las «navajas suizas» de terminal para administ
 
 ## Hoja de ruta
 
+Hecho desde el MVP: servidores integrados, vista dividida, registro de sesiones, claves SSH,
+reconexión automática y visor VNC integrado.
+
 Funciones previstas para alcanzar y superar el conjunto completo de una suite profesional:
 
-- [ ] **Visor RDP y VNC integrados** en pestaña (VNC vía noVNC/RFB en el propio proceso; RDP vía FreeRDP embebido).
+- [ ] **Visor RDP integrado** en pestaña (FreeRDP embebido o pasarela RDP→canvas).
+- [ ] Desacoplar pestañas en ventanas propias y reproducción de los registros de sesión.
 - [ ] **Servidor X11 integrado en Windows** (empaquetar VcXsrv/Xming opcional) para no depender de software externo.
 - [ ] **Mosh** (integrando el cliente `mosh-client` y el arranque vía SSH).
 - [ ] **rlogin, FTP/FTPS, XDMCP** y sesiones de explorador de archivos (S3, WebDAV).
-- [ ] **Terminales divididos** (2 o 4 paneles por pestaña) y desacoplar pestañas en ventanas.
 - [ ] **Sistema de plugins** (API para nuevos protocolos, paneles y acciones de la paleta).
-- [ ] **Generador de claves SSH** (ed25519/RSA) y gestor de `authorized_keys`.
 - [ ] SFTP que **sigue la carpeta del terminal**, cola de transferencias en paralelo y reanudación.
-- [ ] **Registro de sesiones** automático a archivo y reproducción.
 - [ ] **Herramientas de red**: escáner de puertos, ping/traceroute gráficos, servidor DHCP mínimo para aprovisionar equipos y FTPS/SFTP integrados.
 - [ ] **Importación de sesiones** desde otras herramientas (archivos de exportación de clientes populares, PuTTY desde el registro de Windows).
 - [ ] Integración con el almacén de credenciales del sistema (Windows Credential Manager / libsecret) y llaves FIDO2.
@@ -98,6 +108,7 @@ El flujo de GitHub Actions compila y prueba en Linux y Windows y publica los paq
 | `Ctrl+Tab` / `Ctrl+Mayús+Tab` | Pestaña siguiente / anterior |
 | `Ctrl+Mayús+K` | Paleta de comandos e ir a sesión |
 | `Ctrl+Mayús+E` | Panel de servidores (TFTP, FTP, HTTP, Syslog) |
+| `Ctrl+Mayús+D` | Cambiar la vista dividida (1, 2 o 4 paneles) |
 | `Ctrl+Mayús+M` | Activar/desactivar multi-ejecución |
 | `Ctrl+Mayús+S` | Mostrar/ocultar SFTP |
 | `Ctrl+Mayús+B` | Mostrar/ocultar el panel de sesiones |
@@ -116,8 +127,11 @@ src/
     sftp-ops.ts    Operaciones SFTP de alto nivel
     importers.ts   Importación de ~/.ssh/config y exportaciones propias
     servers/       Servidores integrados TFTP, FTP, HTTP y Syslog
+    keys.ts        Generación de claves e instalación en authorized_keys
+    session-log.ts Registro de sesiones a archivo
+    vnc-bridge.ts  Puente TCP/SSH para el visor VNC
   preload/         Puente IPC mínimo (contextIsolation + sandbox)
-  renderer/        Interfaz (TypeScript sin framework + xterm.js)
+  renderer/        Interfaz (TypeScript sin framework + xterm.js; visor VNC con noVNC)
   shared/          Tipos compartidos
 test/              Pruebas (node:test) y servidor SSH/SFTP de pruebas
 ```

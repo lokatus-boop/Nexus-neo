@@ -8,6 +8,7 @@ import { parseQuickConnect } from './quick-connect';
 import { parseMacro, runMacro, encodeRecording } from './macro-engine';
 import { THEMES, themeById, applyUiTheme } from './themes';
 import { ServersPanel } from './servers-panel';
+import { keysDialog } from './keys-dialog';
 
 const serversPanel = new ServersPanel();
 import type { AuthPrompt, HostKeyPrompt, Macro, SessionConfig, Settings, TunnelStatus, VaultStatus } from '../shared/types';
@@ -33,7 +34,14 @@ const state = {
   collapsed: new Set<string>(JSON.parse(localStorage.getItem('collapsed') || '[]') as string[]),
   recordingTab: null as Tab | null,
   tunnels: [] as (TunnelStatus & { sessionName?: string })[],
+  layout: 'single' as Layout,
+  cells: [null] as (Tab | null)[],
+  focusedCell: 0,
 };
+
+type Layout = 'single' | 'cols2' | 'rows2' | 'grid4';
+const LAYOUT_CELLS: Record<Layout, number> = { single: 1, cols2: 2, rows2: 2, grid4: 4 };
+const LAYOUT_LABEL: Record<Layout, string> = { single: 'Una pestaña', cols2: 'Dos en vertical', rows2: 'Dos en horizontal', grid4: 'Cuadrícula de 4' };
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector<T>(sel)!;
 
@@ -56,7 +64,7 @@ async function openSession(session: SessionConfig): Promise<Tab | null> {
   if (session.kind === 'rdp' || session.kind === 'vnc') {
     try {
       await api.conn.open(uid(), { session, cols: 80, rows: 24 });
-      toast(`${session.kind.toUpperCase()} abierto en una ventana externa`, 'ok');
+      toast(session.kind === 'vnc' && !session.vncExternal ? `VNC: abriendo ${session.name} en el visor integrado` : `${session.kind.toUpperCase()} abierto con el cliente del sistema`, 'ok');
     } catch (e) {
       toast(errMsg(e), 'error');
     }
@@ -68,6 +76,9 @@ async function openSession(session: SessionConfig): Promise<Tab | null> {
   tab.mount($('#panes'));
   tab.setBroadcastVisible(state.multiExec);
   bindTabEvents(tab);
+  // En vista dividida, las pestañas nuevas ocupan primero las celdas libres.
+  const empty = state.cells.indexOf(null);
+  if (empty >= 0) state.focusedCell = empty;
   activate(tab);
   await tab.connect();
   if (tab.state === 'connected' && session.startupMacroId) {
@@ -85,6 +96,9 @@ function bindTabEvents(tab: Tab): void {
     }
   });
   tab.tabEl.addEventListener('click', () => activate(tab));
+  tab.pane.addEventListener('mousedown', () => {
+    if (state.active !== tab) activate(tab);
+  });
   tab.tabEl.addEventListener('tab-close', () => void closeTab(tab));
   tab.tabEl.addEventListener('dblclick', async () => {
     const n = await promptDialog('Renombrar pestaña', 'Título', tab.title);
@@ -132,10 +146,62 @@ function saveScrollback(tab: Tab): void {
 }
 
 function activate(tab: Tab | null): void {
+  if (tab) {
+    const at = state.cells.indexOf(tab);
+    if (at >= 0) state.focusedCell = at;
+    else state.cells[state.focusedCell] = tab;
+  }
   state.active = tab;
-  for (const t of state.tabs) t.show(t === tab);
-  $('#welcome').classList.toggle('hidden', !!tab);
+  renderPanes();
   updateToolbar();
+}
+
+function renderPanes(): void {
+  const panes = $('#panes');
+  const split = state.layout !== 'single';
+  panes.className = `layout-${state.layout}`;
+  panes.querySelectorAll('.cell-empty').forEach((e) => e.remove());
+  for (const t of state.tabs) {
+    const cell = state.cells.indexOf(t);
+    t.display(cell >= 0, t === state.active, cell);
+  }
+  if (split) {
+    state.cells.forEach((c, i) => {
+      if (c) return;
+      const ph = el('div', { class: `cell-empty${i === state.focusedCell ? ' focused' : ''}`, style: `order:${i}` },
+        icon('split', 22), el('span', {}, 'Celda libre: elige una pestaña o abre una sesión'));
+      ph.addEventListener('mousedown', () => {
+        state.focusedCell = i;
+        state.active = null;
+        renderPanes();
+      });
+      panes.append(ph);
+    });
+  }
+  $('#welcome').classList.toggle('hidden', state.tabs.length > 0 || (split && state.cells.some(Boolean)));
+}
+
+function setLayout(layout: Layout): void {
+  const n = LAYOUT_CELLS[layout];
+  // Conserva las pestañas visibles y rellena con las siguientes abiertas.
+  const keep = state.cells.filter((c): c is Tab => !!c && state.tabs.includes(c));
+  if (state.active && !keep.includes(state.active)) keep.unshift(state.active);
+  for (const t of state.tabs) if (keep.length < n && !keep.includes(t)) keep.push(t);
+  state.layout = layout;
+  state.cells = Array.from({ length: n }, (_, i) => keep[i] || null);
+  const ai = state.active ? state.cells.indexOf(state.active) : -1;
+  state.focusedCell = ai >= 0 ? ai : 0;
+  if (ai < 0) state.active = state.cells[0];
+  renderPanes();
+  updateToolbar();
+}
+
+function layoutMenu(anchor: HTMLElement): void {
+  const r = anchor.getBoundingClientRect();
+  contextMenu(r.left, r.bottom + 4, (Object.keys(LAYOUT_CELLS) as Layout[]).map((l) => ({
+    label: `${state.layout === l ? '● ' : ''}${LAYOUT_LABEL[l]}`,
+    action: () => setLayout(l),
+  })));
 }
 
 async function closeTab(tab: Tab, force = false): Promise<void> {
@@ -145,8 +211,18 @@ async function closeTab(tab: Tab, force = false): Promise<void> {
   if (state.recordingTab === tab) state.recordingTab = null;
   const i = state.tabs.indexOf(tab);
   state.tabs.splice(i, 1);
+  const cell = state.cells.indexOf(tab);
   tab.dispose();
-  if (state.active === tab) activate(state.tabs[Math.min(i, state.tabs.length - 1)] || null);
+  if (cell >= 0) {
+    // Rellena la celda con una pestaña abierta que no esté a la vista.
+    state.cells[cell] = state.layout === 'single' ? state.tabs[Math.min(i, state.tabs.length - 1)] || null : state.tabs.find((t) => !state.cells.includes(t)) || null;
+  }
+  if (state.active === tab) {
+    state.active = state.cells[cell] || state.cells.find(Boolean) || null;
+    if (state.active) state.focusedCell = state.cells.indexOf(state.active);
+  }
+  renderPanes();
+  updateToolbar();
 }
 
 function cycleTab(dir: number): void {
@@ -255,6 +331,7 @@ async function deleteSession(s: SessionConfig): Promise<void> {
 
 function updateToolbar(): void {
   $('#btn-multiexec').classList.toggle('active', state.multiExec);
+  $('#btn-layout').classList.toggle('active', state.layout !== 'single');
   document.body.classList.toggle('multiexec', state.multiExec);
   $('#btn-record').classList.toggle('recording', !!state.recordingTab);
   $('#btn-record').title = state.recordingTab ? 'Detener grabación de macro' : 'Grabar macro en la pestaña activa';
@@ -509,6 +586,10 @@ async function settingsDialog(): Promise<void> {
   const rdp = input({ value: s.rdpClient, placeholder: 'Automático (mstsc / xfreerdp)' });
   const vnc = input({ value: s.vncClient, placeholder: 'vncviewer' });
   const autolock = input({ type: 'number', value: String(s.vaultAutoLockMin), min: '0' });
+  const logAll = checkbox('Guardar un registro de todas las sesiones', s.logAllSessions);
+  const logStrip = checkbox('Quitar colores y códigos de control del registro', s.logStripAnsi);
+  const logDir = input({ value: s.logDir, placeholder: 'Por defecto: carpeta de datos/logs' });
+  const autoRe = checkbox('Reconectar automáticamente las sesiones SSH/Telnet caídas', s.autoReconnect);
   theme.addEventListener('change', () => applyUiTheme(themeById(theme.value)));
 
   const body = el('div', { class: 'session-form' },
@@ -517,7 +598,15 @@ async function settingsDialog(): Promise<void> {
       field('Tipografía', fontFamily), blink.wrap),
     el('fieldset', {}, el('legend', {}, 'Terminal'),
       el('div', { class: 'grid2' }, field('Líneas de historial', scrollback), field('Shell local por defecto', shell)),
-      cos.wrap, rcp.wrap, coc.wrap),
+      cos.wrap, rcp.wrap, coc.wrap, autoRe.wrap),
+    el('fieldset', {}, el('legend', {}, 'Registro de sesiones'),
+      logAll.wrap, logStrip.wrap,
+      el('div', { class: 'row' }, field('Carpeta de registros', logDir),
+        el('button', { class: 'btn ghost', type: 'button', onclick: async () => {
+          const d = await api.pickDir('Carpeta de registros', logDir.value || undefined);
+          if (d) logDir.value = d;
+        } }, 'Elegir…'),
+        el('button', { class: 'btn ghost', type: 'button', onclick: async () => void api.openPath(logDir.value || (await api.logsDir())) }, 'Abrir'))),
     el('fieldset', {}, el('legend', {}, 'Clientes externos'), el('div', { class: 'grid2' }, field('Cliente RDP', rdp), field('Cliente VNC', vnc))),
     el('fieldset', {}, el('legend', {}, 'Seguridad'),
       field('Bloquear la bóveda tras (minutos de inactividad, 0 = nunca)', autolock),
@@ -540,6 +629,10 @@ async function settingsDialog(): Promise<void> {
       rdpClient: rdp.value.trim(),
       vncClient: vnc.value.trim(),
       vaultAutoLockMin: Number(autolock.value) || 0,
+      logAllSessions: logAll.box.checked,
+      logStripAnsi: logStrip.box.checked,
+      logDir: logDir.value.trim(),
+      autoReconnect: autoRe.box.checked,
     }) },
   ], { wide: true, dismiss: null });
   if (saved) {
@@ -581,8 +674,10 @@ async function palette(): Promise<void> {
     { label: 'Nueva sesión…', sub: 'Acción', run: () => void newSession() },
     { label: 'Terminal local', sub: 'Acción', run: () => void openLocal() },
     { label: 'Multi-ejecución', sub: 'Acción', run: toggleMultiExec },
+    ...(Object.keys(LAYOUT_CELLS) as Layout[]).map((l) => ({ label: `Vista: ${LAYOUT_LABEL[l]}`, sub: 'Vista', run: () => setLayout(l) })),
     { label: 'Macros…', sub: 'Acción', run: () => void macrosDialog() },
     { label: 'Túneles SSH…', sub: 'Acción', run: () => void tunnelsDialog() },
+    { label: 'Claves SSH (generar / instalar)…', sub: 'Acción', run: () => void openKeys() },
     { label: 'Servidores TFTP / FTP / HTTP / Syslog', sub: 'Acción', run: () => void serversPanel.toggle(true) },
     { label: 'Ajustes…', sub: 'Acción', run: () => void settingsDialog() },
     { label: 'Importar ~/.ssh/config', sub: 'Acción', run: () => void importSessions('ssh-config') },
@@ -646,6 +741,11 @@ async function palette(): Promise<void> {
 
 // ---------------------------------------------------------------------------
 
+function openKeys(): Promise<void> {
+  const t = state.active;
+  return keysDialog(t ? { connId: t.connId, title: t.title, isSsh: t.session.kind === 'ssh' && t.state === 'connected' } : null);
+}
+
 async function openLocal(): Promise<void> {
   await openSession({ id: `local-${uid()}`, name: 'Local', folder: '', kind: 'local' });
 }
@@ -674,7 +774,7 @@ function renderWelcome(): void {
       recent.length ? el('div', { class: 'welcome-recent' }, el('h3', {}, 'Sesiones'), ...recent.map((s) =>
         el('button', { class: 'recent', onclick: () => void openSession(s) }, icon(kindIcon(s.kind), 14), el('span', {}, s.name), el('small', {}, s.host || s.serialPath || s.kind)))) : null,
       el('div', { class: 'shortcuts' },
-        ...[['Ctrl+Mayús+E', 'Servidores'], ['Ctrl+Mayús+T', 'Terminal local'], ['Ctrl+Mayús+W', 'Cerrar pestaña'], ['Ctrl+Tab', 'Siguiente pestaña'], ['Ctrl+Mayús+M', 'Multi-ejecución'], ['Ctrl+Mayús+F', 'Buscar'], ['Ctrl+Mayús+B', 'Panel lateral'], ['Ctrl+Mayús+S', 'Panel SFTP'], ['Ctrl+ +/-', 'Zoom']]
+        ...[['Ctrl+Mayús+D', 'Vista dividida'], ['Ctrl+Mayús+E', 'Servidores'], ['Ctrl+Mayús+T', 'Terminal local'], ['Ctrl+Mayús+W', 'Cerrar pestaña'], ['Ctrl+Tab', 'Siguiente pestaña'], ['Ctrl+Mayús+M', 'Multi-ejecución'], ['Ctrl+Mayús+F', 'Buscar'], ['Ctrl+Mayús+B', 'Panel lateral'], ['Ctrl+Mayús+S', 'Panel SFTP'], ['Ctrl+ +/-', 'Zoom']]
           .map(([k, d]) => el('div', {}, el('kbd', {}, k), el('span', {}, d)))),
     ),
   );
@@ -706,12 +806,14 @@ function buildLayout(): void {
         tbtn('btn-local', 'terminal', 'Terminal local (Ctrl+Mayús+T)', () => void openLocal()),
         qc,
         el('div', { class: 'spacer' }),
+        tbtn('btn-layout', 'split', 'Vista dividida (Ctrl+Mayús+D)', () => layoutMenu($('#btn-layout'))),
         tbtn('btn-sftp', 'folder', 'Panel SFTP (Ctrl+Mayús+S)', () => void state.active?.toggleSftp()),
         tbtn('btn-multiexec', 'broadcast', 'Multi-ejecución (Ctrl+Mayús+M)', toggleMultiExec),
         tbtn('btn-macros', 'keyboard', 'Macros', () => void macrosDialog()),
         tbtn('btn-record', 'record', 'Grabar macro', () => void toggleRecording()),
         tbtn('btn-tunnels', 'tunnel', 'Túneles SSH', () => void tunnelsDialog(), el('span', { id: 'tunnel-count', class: 'badge' })),
         tbtn('btn-servers', 'server', 'Servidores TFTP / FTP / HTTP / Syslog (Ctrl+Mayús+E)', () => void serversPanel.toggle(), el('span', { id: 'servers-count', class: 'badge' })),
+        tbtn('btn-keys', 'key', 'Claves SSH', () => void openKeys()),
         tbtn('btn-vault', 'lock', 'Bóveda', () => void vaultDialog()),
         tbtn('btn-settings', 'settings', 'Ajustes', () => void settingsDialog()),
       ),
@@ -730,7 +832,7 @@ function buildLayout(): void {
         ),
         el('section', { id: 'workspace' },
           el('nav', { id: 'tabbar' }),
-          el('div', { id: 'panes' }, el('div', { id: 'welcome' })),
+          el('div', { id: 'panes', class: 'layout-single' }, el('div', { id: 'welcome' })),
         ),
         serversPanel.root,
       ),
@@ -752,6 +854,10 @@ function bindShortcuts(): void {
     else if (mod && k === 'KeyM') toggleMultiExec();
     else if (mod && k === 'KeyS') void state.active?.toggleSftp();
     else if (mod && k === 'KeyE') void serversPanel.toggle();
+    else if (mod && k === 'KeyD') {
+      const order = Object.keys(LAYOUT_CELLS) as Layout[];
+      setLayout(order[(order.indexOf(state.layout) + 1) % order.length]);
+    }
     else if (e.ctrlKey && e.key === 'Tab') cycleTab(e.shiftKey ? -1 : 1);
     else if (e.ctrlKey && !e.shiftKey && (e.key === '=' || e.key === '+')) zoom(1);
     else if (e.ctrlKey && !e.shiftKey && e.key === '-') zoom(-1);

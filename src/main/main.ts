@@ -6,12 +6,15 @@ import { randomUUID } from 'node:crypto';
 import { Store } from './store';
 import { Vault } from './vault';
 import { TerminalConnection, Prompter } from './protocols/base';
-import { SshConnection } from './protocols/ssh';
+import { SshConnection, SshDeps, connectClient } from './protocols/ssh';
+import { VncBridge } from './vnc-bridge';
 import { LocalConnection, detectShells } from './protocols/local';
 import { TelnetConnection } from './protocols/telnet';
 import { SerialConnection, listSerialPorts } from './protocols/serial';
 import { launchExternal } from './protocols/external';
 import * as sftpOps from './sftp-ops';
+import { SessionLogger } from './session-log';
+import { generateKey, installPublicKey, listKeys, sshDir, KeyType } from './keys';
 import { ServerManager, defaultServers, listInterfaces } from './servers/manager';
 import { buildNexusExport, parseNexusExport, parseSshConfig } from './importers';
 import type { AuthPrompt, HostKeyPrompt, Macro, OpenRequest, SecretEntry, ServerConfig, SessionConfig, Settings, TunnelConfig } from '../shared/types';
@@ -52,6 +55,38 @@ function prompterFor(connId: string): Prompter {
     hostKey: (p: HostKeyPrompt) => ask<boolean>('prompt:hostKey', { connId, ...p }),
     auth: (p: AuthPrompt) => ask<string[] | null>('prompt:auth', { connId, ...p }),
   };
+}
+
+function sshDeps(connId: string, sessions: SessionConfig[]): SshDeps {
+  return {
+    prompter: prompterFor(connId),
+    knownHosts: { get: (id) => store.knownHost(id), set: (id, fp) => store.setKnownHost(id, fp) },
+    secretFor: (id) => (vault.isUnlocked() ? vault.get(id) : undefined),
+    sessionById: (id) => sessions.find((s) => s.id === id),
+    onTunnelsChanged: () => send('tunnels:changed', allTunnelStatus()),
+  };
+}
+
+// --- Visor VNC integrado -----------------------------------------------------
+const vncWindows = new Map<string, { cfg: SessionConfig; bridge?: VncBridge }>();
+
+function openVncWindow(cfg: SessionConfig): void {
+  const id = randomUUID();
+  vncWindows.set(id, { cfg });
+  const w = new BrowserWindow({
+    width: 1280,
+    height: 860,
+    backgroundColor: '#0b0f14',
+    title: `${cfg.name} — VNC · Nexus Neo`,
+    autoHideMenuBar: true,
+    webPreferences: { preload: join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true },
+  });
+  w.setMenu(null);
+  void w.loadFile(join(__dirname, 'renderer/vnc.html'), { query: process.env.NEXUS_NEO_VNC_DEBUG ? { id, debug: '1' } : { id } });
+  w.on('closed', () => {
+    vncWindows.get(id)?.bridge?.close();
+    vncWindows.delete(id);
+  });
 }
 
 function sshConn(connId: string): SshConnection {
@@ -173,6 +208,10 @@ function registerIpc(): void {
   handle('conn:open', async (connId: string, req: OpenRequest) => {
     const cfg = req.session;
     const settings = await store.getSettings();
+    if (cfg.kind === 'vnc' && !cfg.vncExternal) {
+      openVncWindow(cfg);
+      return;
+    }
     if (cfg.kind === 'rdp' || cfg.kind === 'vnc') {
       await launchExternal(cfg, settings);
       return;
@@ -181,17 +220,7 @@ function registerIpc(): void {
     const sessionsSnapshot = await store.listSessions();
     switch (cfg.kind) {
       case 'ssh':
-        conn = new SshConnection(
-          cfg,
-          {
-            prompter: prompterFor(connId),
-            knownHosts: { get: (id) => store.knownHost(id), set: (id, fp) => store.setKnownHost(id, fp) },
-            secretFor: (id) => (vault.isUnlocked() ? vault.get(id) : undefined),
-            sessionById: (id) => sessionsSnapshot.find((s) => s.id === id),
-            onTunnelsChanged: () => send('tunnels:changed', allTunnelStatus()),
-          },
-          connId,
-        );
+        conn = new SshConnection(cfg, sshDeps(connId, sessionsSnapshot), connId);
         break;
       case 'local':
         conn = new LocalConnection(cfg, settings.defaultLocalShell);
@@ -206,8 +235,23 @@ function registerIpc(): void {
         throw new Error(`Tipo de sesión no soportado: ${cfg.kind}`);
     }
     conns.set(connId, conn);
-    conn.on('data', (d: string) => send('conn:data', connId, d));
+    let logger: SessionLogger | null = null;
+    if (settings.logAllSessions || cfg.logSession) {
+      try {
+        logger = new SessionLogger(settings.logDir || join(store.dir, 'logs'), cfg.name, settings.logStripAnsi);
+      } catch (e) {
+        send('conn:data', connId, `\x1b[33m⚠ No se pudo crear el registro de sesión: ${(e as Error).message}\x1b[0m\r\n`);
+      }
+    }
+    conn.on('data', (d: string) => {
+      send('conn:data', connId, d);
+      logger?.write(d);
+    });
     conn.on('state', (s: string, msg?: string) => {
+      if ((s === 'closed' || s === 'error') && logger) {
+        logger.close();
+        logger = null;
+      }
       send('conn:state', connId, s, msg);
       if (s === 'closed' && conn instanceof SshConnection) send('tunnels:changed', allTunnelStatus());
     });
@@ -216,6 +260,7 @@ function registerIpc(): void {
     } catch (e) {
       conns.delete(connId);
       conn.close();
+      logger?.close();
       throw e;
     }
   });
@@ -342,7 +387,58 @@ function registerIpc(): void {
     const r = await dialog.showOpenDialog(win!, { title, defaultPath: current, properties: ['openDirectory', 'createDirectory'] });
     return r.canceled ? null : r.filePaths[0];
   });
-  handle('shell:openPath', (p: string) => shell.openPath(p));
+  handle('shell:openPath', async (p: string) => {
+    await fs.mkdir(p, { recursive: true }).catch(() => undefined);
+    return shell.openPath(p);
+  });
+  handle('logs:dir', async () => (await store.getSettings()).logDir || join(store.dir, 'logs'));
+
+  // --- VNC ---------------------------------------------------------------
+  ipcMain.handle('vnc:connect', async (e, id: string) => {
+    const entry = vncWindows.get(id);
+    if (!entry) throw new Error('Sesión VNC desconocida');
+    const { cfg } = entry;
+    const host = cfg.host || 'localhost';
+    const port = cfg.port || 5900;
+    let ssh;
+    let via = '';
+    if (cfg.jumpSessionId) {
+      const sessions = await store.listSessions();
+      const jump = sessions.find((s) => s.id === cfg.jumpSessionId);
+      if (!jump) throw new Error('La sesión SSH del túnel no existe.');
+      ssh = await connectClient(jump, sshDeps(`vnc-${id}`, sessions));
+      via = ` a través de ${jump.name}`;
+    }
+    const bridge = new VncBridge(
+      { host, port, ssh },
+      (chunk) => !e.sender.isDestroyed() && e.sender.send('vnc:data', chunk),
+      (reason) => !e.sender.isDestroyed() && e.sender.send('vnc:closed', reason),
+    );
+    await bridge.open();
+    entry.bridge = bridge;
+    return { name: cfg.name, target: `${host}:${port}${via}`, viewOnly: false };
+  });
+  ipcMain.on('vnc:write', (_e, id: string, data: Uint8Array) => {
+    lastActivity = Date.now();
+    vncWindows.get(id)?.bridge?.write(data);
+  });
+  ipcMain.handle('vnc:secret', (_e, id: string) => {
+    const entry = vncWindows.get(id);
+    return entry && vault.isUnlocked() ? vault.get(entry.cfg.id)?.password ?? null : null;
+  });
+  ipcMain.handle('vnc:disconnect', (_e, id: string) => vncWindows.get(id)?.bridge?.close());
+
+  // --- Claves SSH ----------------------------------------------------------
+  handle('keys:list', async () => ({ dir: sshDir(), keys: await listKeys() }));
+  handle('keys:generate', (o: { type: KeyType; bits?: number; comment?: string; passphrase?: string; name: string; overwrite?: boolean }) => {
+    if (!/^[\w.@-]+$/.test(o.name)) throw new Error('Nombre de archivo no válido.');
+    return generateKey({ ...o, path: join(sshDir(), o.name) });
+  });
+  handle('keys:install', async (connId: string, publicKey: string) => installPublicKey(await sshConn(connId).sftp(), publicKey));
+  handle('keys:openDir', async () => {
+    await fs.mkdir(sshDir(), { recursive: true, mode: 0o700 });
+    return shell.openPath(sshDir());
+  });
 
   // --- Utilidades ----------------------------------------------------------
   handle('dialog:pickFile', async (title: string) => {
