@@ -1,6 +1,7 @@
 // Empaqueta main, preload y renderer con esbuild.
 import { build, context } from 'esbuild';
 import { cpSync, mkdirSync, readFileSync } from 'node:fs';
+import { writeInstallerLicense } from './legal.mjs';
 
 const watch = process.argv.includes('--watch');
 const prod = process.argv.includes('--prod');
@@ -65,6 +66,10 @@ const configs = [
 
 cpSync('src/renderer/index.html', 'dist/renderer/index.html');
 cpSync('src/renderer/vnc.html', 'dist/renderer/vnc.html');
+// Logotipo para la interfaz e icono de ventana (los instaladores usan build/icon.ico y build/icons/).
+cpSync('build/icon.svg', 'dist/renderer/logo.svg');
+cpSync('build/icons/256x256.png', 'dist/icon.png');
+writeInstallerLicense();
 if (watch) {
   for (const c of configs) await (await context(c)).watch();
 } else {

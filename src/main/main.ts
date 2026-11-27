@@ -79,6 +79,7 @@ function openVncWindow(cfg: SessionConfig): void {
     height: 860,
     backgroundColor: '#0b0f14',
     title: `${cfg.name} — VNC · Nexus Neo`,
+    icon: windowIcon(),
     autoHideMenuBar: true,
     webPreferences: { preload: join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
@@ -105,6 +106,12 @@ function allTunnelStatus() {
 }
 
 // ---------------------------------------------------------------------------
+/** Icono de ventana y barra de tareas (en Windows el .exe ya lleva el .ico). */
+function windowIcon(): string | undefined {
+  const p = join(__dirname, 'icon.png');
+  return existsSync(p) ? p : undefined;
+}
+
 function createWindow(): void {
   win = new BrowserWindow({
     width: 1400,
@@ -113,7 +120,7 @@ function createWindow(): void {
     minHeight: 560,
     backgroundColor: '#0f1419',
     title: 'Nexus Neo',
-    icon: existsSync(join(__dirname, '../build/icon.png')) ? join(__dirname, '../build/icon.png') : undefined,
+    icon: windowIcon(),
     autoHideMenuBar: true,
     webPreferences: {
       preload: join(__dirname, 'preload.js'),
@@ -152,7 +159,12 @@ function registerIpc(): void {
     shells: detectShells(),
     dataDir: store.dir,
     home: homedir(),
+    versions: { electron: process.versions.electron, chrome: process.versions.chrome, node: process.versions.node },
   }));
+  handle('app:quit', async () => {
+    await servers.stopAll().catch(() => undefined);
+    app.quit();
+  });
 
   // --- Sesiones -------------------------------------------------------------
   handle('sessions:list', () => store.listSessions());

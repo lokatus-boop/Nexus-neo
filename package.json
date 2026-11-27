@@ -1,6 +1,6 @@
 {
   "name": "nexus-neo",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Cliente de acceso remoto multiplataforma: SSH, SFTP, Telnet, serie, túneles, X11, multi-ejecución y macros.",
   "main": "dist/main.js",
   "scripts": {
@@ -12,10 +12,11 @@
     "test": "node scripts/test.mjs",
     "test:ui": "node scripts/build.mjs && node scripts/ui-test.mjs",
     "dist:linux": "npm run build:prod && electron-builder --linux",
-    "dist:win": "npm run build:prod && electron-builder --win"
+    "dist:win": "npm run build:prod && electron-builder --win",
+    "icons": "node scripts/icons.mjs"
   },
   "author": {
-    "name": "LuismiSanz",
+    "name": "Luismi Sanz",
     "email": "232393454+lokatus-boop@users.noreply.github.com"
   },
   "license": "MIT",
@@ -39,6 +40,7 @@
     "typescript": "^7.0.2"
   },
   "productName": "Nexus Neo",
+  "desktopName": "nexus-neo.desktop",
   "build": {
     "appId": "io.github.lokatusboop.nexusneo",
     "productName": "Nexus Neo",
@@ -60,19 +62,28 @@
         "AppImage",
         "deb"
       ],
-      "category": "Network"
+      "category": "Network",
+      "icon": "build/icons",
+      "synopsis": "Cliente de acceso remoto: SSH, SFTP, Telnet, serie, túneles, VNC",
+      "syncDesktopName": true
     },
     "win": {
       "target": [
         "nsis",
         "portable"
-      ]
+      ],
+      "icon": "build/icon.ico"
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "license": "build/licencia.txt",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "shortcutName": "Nexus Neo"
     },
-    "npmRebuild": false
+    "npmRebuild": false,
+    "copyright": "© 2026 Luismi Sanz"
   },
   "homepage": "https://github.com/lokatus-boop/nexus-neo"
 }

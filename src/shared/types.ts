@@ -107,6 +107,8 @@ export interface Settings {
   logStripAnsi: boolean;
   /** Reintenta conectar automáticamente si se cae una sesión remota. */
   autoReconnect: boolean;
+  /** Versión del aviso legal aceptada por el usuario (0 = sin aceptar). */
+  disclaimerAccepted: number;
 }
 
 export interface SecretEntry {

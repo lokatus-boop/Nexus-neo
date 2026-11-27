@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <title>Nexus Neo (tamaños pequeños)</title>
+  <!-- Variante simplificada para 16–32 px: sin órbita ni halo, trazos más gruesos. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1a2944"/>
+      <stop offset="1" stop-color="#070b14"/>
+    </linearGradient>
+    <linearGradient id="neon" x1="120" y1="400" x2="392" y2="112" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2dd4bf"/>
+      <stop offset="0.55" stop-color="#38bdf8"/>
+      <stop offset="1" stop-color="#a78bfa"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="512" height="512" rx="104" fill="url(#bg)"/>
+  <path d="M144 376 V136 L368 376 V136" fill="none" stroke="url(#neon)" stroke-width="80" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="144" cy="376" r="52" fill="#2dd4bf"/>
+  <circle cx="368" cy="136" r="52" fill="#a78bfa"/>
+</svg>

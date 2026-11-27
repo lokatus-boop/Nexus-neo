@@ -1,4 +1,8 @@
+<p align="center"><img src="build/icon.svg" width="128" height="128" alt="Icono de Nexus Neo"></p>
+
 # Nexus Neo
+
+**Hecho por Luismi Sanz.**
 
 Cliente de acceso remoto **multiplataforma (Windows y Linux)** que reúne en una sola ventana con pestañas
 SSH, SFTP, Telnet, puerto serie, túneles SSH, reenvío X11, terminal local, multi-ejecución, macros y una
@@ -13,7 +17,7 @@ alternativa moderna y abierta a las «navajas suizas» de terminal para administ
 
 ## Funcionalidades
 
-### Disponibles en la versión 0.1.1
+### Disponibles en la versión 0.1.2
 
 | Área | Qué incluye |
 | --- | --- |
@@ -96,6 +100,9 @@ npm run dist:linux   # AppImage y .deb en release/
 npm run dist:win     # instalador NSIS y versión portable (ejecutar en Windows)
 ```
 
+Icono: el original está en `build/icon.svg` (y `build/icon-small.svg`, una variante simplificada para 16–32 px).
+Tras modificarlo, `npm run icons` regenera `build/icon.png`, `build/icons/*.png` (Linux) y `build/icon.ico` (Windows).
+
 Los módulos nativos (`node-pty`, `serialport`) usan N-API, así que no hace falta recompilarlos para Electron.
 El flujo de GitHub Actions compila y prueba en Linux y Windows y publica los paquetes como artefactos.
 
@@ -139,6 +146,33 @@ test/              Pruebas (node:test) y servidor SSH/SFTP de pruebas
 Seguridad: la interfaz se ejecuta con `contextIsolation`, `sandbox` y sin `nodeIntegration`, con CSP estricta.
 Las contraseñas sólo viajan al proceso principal y sólo se escriben en disco cifradas en la bóveda.
 
+## Autoría
+
+Nexus Neo está hecho por **Luismi Sanz**. La ventana «Acerca de» (botón ⓘ de la barra superior o «Acerca de»
+en la paleta `Ctrl+Mayús+K`) muestra la versión, la autoría y el aviso legal.
+
+## Aviso legal
+
+![Aviso legal en el primer arranque](docs/screenshots/10-aviso-legal.png)
+
+Nexus Neo se proporciona **«tal cual»**, sin garantías de ningún tipo, expresas o implícitas, incluidas las de
+comerciabilidad, idoneidad para un fin concreto y ausencia de infracción.
+
+**El uso de este software es responsabilidad exclusiva del usuario.** En ningún caso el autor será responsable
+de daños, pérdidas de datos, interrupciones de servicio, incidentes de seguridad ni de cualquier otro perjuicio
+derivado de su uso o de la imposibilidad de usarlo.
+
+Úsalo sólo con equipos, redes y servicios para los que tengas autorización. Eres responsable de cumplir la
+legislación aplicable y las políticas de tu organización, y de custodiar tus credenciales, claves y copias de
+seguridad.
+
+Nexus Neo es un proyecto independiente y no está afiliado, patrocinado ni respaldado por ningún otro producto o
+empresa citados en su documentación.
+
+La primera vez que se abre la aplicación hay que aceptar este aviso (si no, se cierra), y el instalador de
+Windows lo muestra junto a la licencia antes de instalar. El texto vive en `src/shared/legal.ts`; si cambia
+`DISCLAIMER_VERSION`, se vuelve a pedir la aceptación.
+
 ## Licencia
 
-MIT
+MIT © 2026 Luismi Sanz. Consulta [LICENSE](LICENSE).

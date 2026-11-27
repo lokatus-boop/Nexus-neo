@@ -10,6 +10,7 @@ function on(ch: string, fn: (...args: any[]) => void): () => void {
 
 const api = {
   appInfo: invoke('app:info'),
+  quit: invoke('app:quit'),
   sessions: {
     list: invoke('sessions:list'),
     save: invoke('sessions:save'),

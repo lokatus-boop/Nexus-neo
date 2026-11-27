@@ -35,8 +35,7 @@ input, select, textarea, button { font: inherit; color: inherit; }
 #toolbar { display: flex; align-items: center; gap: 4px; padding: 6px 10px; background: var(--panel); border-bottom: 1px solid var(--border); -webkit-app-region: drag; }
 #toolbar > * { -webkit-app-region: no-drag; }
 .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; letter-spacing: .3px; margin-right: 10px; -webkit-app-region: drag; }
-.logo-mark { display: inline-grid; place-items: center; width: 44px; height: 44px; border-radius: 12px; font-weight: 800; font-size: 22px; color: #071513; background: linear-gradient(135deg, var(--accent), var(--accent2)); }
-.logo-mark.sm { width: 24px; height: 24px; border-radius: 7px; font-size: 13px; }
+.app-logo { display: block; flex: none; user-select: none; -webkit-user-drag: none; }
 .tool-btn { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 32px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--muted); cursor: pointer; }
 .tool-btn:hover:not([disabled]) { background: var(--panel2); color: var(--text); }
 .tool-btn.active { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
@@ -279,3 +278,17 @@ body.servers-open #toasts { right: 436px; }
 .tab.in-view { color: var(--text); background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .perm-warn { color: var(--warn); display: block; margin-top: 2px; }
 .perm-error { white-space: pre-wrap; user-select: text; font-size: 12px; margin: 0; }
+
+/* ---------- Acerca de y aviso legal ---------- */
+.about { user-select: text; }
+.about-head { display: flex; align-items: center; gap: 18px; margin-bottom: 14px; }
+.about-head h1 { margin: 0; font-size: 24px; letter-spacing: -.3px; }
+.about-head p { margin: 2px 0 0; }
+.about-version, .about-meta { color: var(--muted); font-size: 12px; }
+.about-author strong { background: linear-gradient(90deg, #2dd4bf, #38bdf8, #a78bfa); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.about h3 { margin: 18px 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); }
+.about a, .welcome-foot a { color: var(--accent); }
+.disclaimer { max-height: 240px; overflow: auto; padding: 4px 14px; font-size: 12.5px; line-height: 1.5; background: var(--bg); border: 1px solid var(--border); border-left: 3px solid var(--warn); border-radius: 8px; }
+.disclaimer p { margin: 8px 0; }
+.first-run .check { margin-top: 14px; }
+.welcome-foot { margin-top: 28px; color: var(--muted); font-size: 12px; text-align: center; }
