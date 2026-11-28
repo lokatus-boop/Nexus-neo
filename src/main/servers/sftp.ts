@@ -631,7 +631,9 @@ export class SftpServer extends BuiltinServer {
             pos += b.length;
           });
           const status = await rd.byte();
-          ok = status === 0;
+          // Algunos clientes (libssh reciente) cierran el canal justo tras los datos sin mandar el
+          // byte de estado final: si llegaron todos los bytes, el archivo está completo.
+          ok = status === 0 || status === null;
         } finally {
           await fh.close();
           if (ok) {

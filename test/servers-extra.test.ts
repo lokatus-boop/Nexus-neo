@@ -240,7 +240,7 @@ test('SFTP/SCP: exige contraseña o clave', async () => {
 
 test('SFTP y SCP con curl (libssh)', { skip: !(curlHas('sftp') && curlHas('scp')) && 'curl sin SFTP/SCP' }, async () => {
   const srv = new SftpServer(cfg('sftp', { username: 'nexus', password: 'clave' }), state);
-  srv.on('log', (e: ServerLogEntry) => e.level === 'error' && console.log('[sftp]', e.message));
+  srv.on('log', (e: ServerLogEntry) => e.level !== 'info' && console.log('[sftp]', e.level, e.message));
   await srv.start();
   const port = srv.boundPort()!;
   const base = ['-k', '-u', 'nexus:clave'];
