@@ -256,6 +256,9 @@ test('SFTP y SCP con curl (libssh)', { skip: !(curlHas('sftp') && curlHas('scp')
     writeFileSync(up, 'interface Gi0/1\n shutdown\n');
     r = await curl([...base, '-T', up, `scp://127.0.0.1:${port}/configs/router.cfg`]);
     assert.equal(r.code, 0, r.err);
+    // Algunas versiones de curl cierran sin esperar la última confirmación SCP: el servidor
+    // termina de guardar el archivo justo después de que curl salga.
+    for (let i = 0; i < 100 && !existsSync(join(root, 'configs', 'router.cfg')); i++) await new Promise((res) => setTimeout(res, 20));
     assert.equal(readFileSync(join(root, 'configs', 'router.cfg'), 'utf8'), 'interface Gi0/1\n shutdown\n');
     r = await curl([...base, '-T', up, '--ftp-create-dirs', `sftp://127.0.0.1:${port}/sftp-curl/x.cfg`]);
     assert.equal(r.code, 0, r.err);
