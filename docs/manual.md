@@ -1,6 +1,6 @@
 # Manual de usuario de Nexus Neo
 
-Versión 0.2.0 · Hecho por Luismi Sanz
+Versión 0.3.0 · Hecho por Luismi Sanz
 
 Nexus Neo es un cliente de acceso remoto para **Windows y Linux** que reúne en una sola ventana con pestañas
 SSH, SFTP, Telnet, Mosh, puerto serie, escritorio remoto (RDP y VNC), túneles SSH, servidores de
@@ -24,7 +24,7 @@ Este manual explica cómo instalarlo y cómo usar cada función. Si buscas cómo
 11. [Vista dividida, multi-ejecución y macros](#11-vista-dividida-multi-ejecución-y-macros)
 12. [Bóveda de credenciales](#12-bóveda-de-credenciales)
 13. [Claves SSH](#13-claves-ssh)
-14. [Servidores integrados: TFTP, FTP, HTTP y Syslog](#14-servidores-integrados-tftp-ftp-http-y-syslog)
+14. [Servidores integrados: TFTP, FTP, SFTP/SCP, HTTP, HTTPS, Syslog y DHCP](#14-servidores-integrados-tftp-ftp-sftpscp-http-https-syslog-y-dhcp)
 15. [Operaciones de red: despliegue masivo, plantillas y respaldos](#15-operaciones-de-red)
 16. [Sincronización cifrada entre equipos](#16-sincronización-cifrada-entre-equipos)
 17. [Temas](#17-temas)
@@ -292,22 +292,74 @@ Botón de la llave en la barra superior:
 - **Corregir permisos**: en Windows ajusta la ACL para que sólo tu usuario lea la clave (evita el error
   «UNPROTECTED PRIVATE KEY FILE» de OpenSSH); en Linux aplica `chmod 600`.
 
-## 14. Servidores integrados: TFTP, FTP, HTTP y Syslog
+## 14. Servidores integrados: TFTP, FTP, SFTP/SCP, HTTP, HTTPS, Syslog y DHCP
 
-Panel lateral (`Ctrl+Mayús+E`) con cuatro servidores que se arrancan con un clic:
+Panel lateral (`Ctrl+Mayús+E`) con siete servidores que se arrancan con un clic:
 
 ![Servidores integrados](screenshots/07-servidores.png)
 
-| Servidor | Detalles |
-| --- | --- |
-| TFTP | Subida y bajada, opciones `blksize` y `tsize`. Para firmware y configuraciones de equipos de red. |
-| FTP | Pasivo y activo, usuario con contraseña o anónimo. |
-| HTTP | Listado de carpetas, descargas reanudables y subida con PUT opcional. |
-| Syslog | UDP y TCP, colores por severidad y un archivo por día. |
+| Servidor | Puerto por defecto | Detalles |
+| --- | --- | --- |
+| TFTP | 69 | Subida y bajada, opciones `blksize` y `tsize`. Para firmware y configuraciones de equipos de red. |
+| FTP | 21 | Pasivo y activo, usuario con contraseña o anónimo. |
+| SFTP / SCP | 2222 | Servidor SSH sólo de archivos: SFTP y SCP (el moderno, que va sobre SFTP, y el clásico `scp -O`, también recursivo). Usuario con contraseña y/o claves públicas. |
+| HTTP | 8080 | Listado de carpetas, descargas reanudables y subida con PUT opcional. |
+| HTTPS | 8443 | Lo mismo que HTTP, cifrado con TLS. Certificado propio o autofirmado generado automáticamente. |
+| Syslog | 514 | UDP y TCP, colores por severidad y un archivo por día. |
+| DHCP | 67 | Reparte IP en una red de laboratorio o de aprovisionamiento, con reservas por MAC y opciones para teléfonos IP y arranque por red. |
 
 Para cada uno eliges carpeta raíz, puerto e interfaz. El panel muestra las IP de tu equipo y un registro en vivo
-de transferencias. En Linux, los puertos menores de 1024 (69, 21, 80, 514) necesitan permisos; usa puertos
-altos o concede `cap_net_bind_service` al ejecutable.
+de transferencias. En Linux, los puertos menores de 1024 (69, 21, 67, 80, 514) necesitan permisos; usa puertos
+altos o concede `cap_net_bind_service` al ejecutable (`sudo setcap cap_net_bind_service=+ep <ruta del ejecutable>`).
+Si actualizas desde una versión anterior, los servidores nuevos aparecen solos en el panel sin tocar los que ya
+tenías configurados.
+
+![SFTP/SCP, HTTPS y DHCP](screenshots/20-servidores-sftp-https-dhcp.png)
+
+### SFTP / SCP
+
+- Indica un **usuario** y una **contraseña** (se guarda cifrada en la bóveda) y, si quieres, **claves públicas
+  autorizadas** (una por línea, formato `ssh-ed25519 AAAA… comentario`). Puedes usar sólo claves dejando la
+  contraseña vacía.
+- La carpeta raíz es todo lo que ve el cliente: aparece como `/` y no se puede salir de ella. No hay shell ni
+  reenvío de puertos; cualquier otra orden se rechaza.
+- Sin «Permitir subidas» es de sólo lectura (no se puede subir, borrar ni renombrar).
+- Funciona con WinSCP, FileZilla, `sftp`, `scp` (también `scp -O` y `-r`) y con los equipos de red que copian
+  por SCP, por ejemplo `copy scp://nexus@192.168.1.10/ios.bin flash:` en Cisco.
+- La primera vez se genera una clave de host ed25519 propia; su huella `SHA256:…` sale en el registro al
+  arrancar para que la compares con la que muestra el cliente.
+- El 22 suele estar ocupado por el SSH del propio equipo, por eso el puerto por defecto es 2222.
+
+```bash
+scp -P 2222 firmware.bin nexus@192.168.1.10:/
+sftp -P 2222 nexus@192.168.1.10
+```
+
+### HTTPS
+
+- Sin certificado propio, Nexus Neo genera uno **autofirmado** (ECDSA P-256) que cubre el nombre del equipo,
+  `localhost` y todas sus IP, y lo reutiliza en los siguientes arranques. Su huella SHA-256 aparece en el
+  registro. El navegador avisará la primera vez porque no lo firma una autoridad; con `curl` usa `-k`, o
+  `--cacert` con el archivo `https-cert.pem` de la carpeta de datos (`servidores/`).
+- Para usar el tuyo, indica el certificado y la clave privada en PEM (la clave sin cifrar). Si no casan entre sí
+  el servidor no arranca y te lo dice.
+
+### DHCP
+
+- Configura el **rango** (desde/hasta), la **máscara** y, si hace falta, la **puerta de enlace**, los **DNS**
+  (separados por comas), el **dominio** y la **duración** de la concesión.
+- **Servidor TFTP** y **archivo de arranque** rellenan las opciones 66, 150 (Cisco) y 67: así los teléfonos IP,
+  los equipos con arranque PXE o los switches con aprovisionamiento automático (ZTP) encuentran solos su
+  configuración en el servidor TFTP integrado.
+- **Reservas**: una por línea, `MAC IP nombre`, para que un equipo reciba siempre la misma IP.
+- Con el servidor en marcha, la tarjeta muestra la tabla de **concesiones** (IP, MAC, nombre del equipo y cuánto
+  le queda). Se guardan en `concesiones-dhcp.json` dentro de la carpeta indicada y se recuerdan al reiniciar.
+- Tu equipo necesita una **IP fija dentro de la misma red** que el rango, en la interfaz conectada a esos
+  equipos. Si eliges una interfaz concreta en «Escuchar en», las respuestas salen por ella.
+- Úsalo sólo en redes **sin otro servidor DHCP** (una red aislada, una VLAN de laboratorio o un cable directo):
+  dos servidores en la misma red reparten direcciones en conflicto.
+- Los equipos sólo buscan DHCP en el puerto 67. En Linux necesita el permiso `cap_net_bind_service`; en Windows,
+  permite Nexus Neo en el firewall cuando te lo pregunte.
 
 ## 15. Operaciones de red
 

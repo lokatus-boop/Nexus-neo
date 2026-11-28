@@ -1,5 +1,19 @@
 # Cambios
 
+## 0.3.0
+
+- **Tres servidores integrados nuevos** en el panel de servidores (`Ctrl+Mayús+E`):
+  - **SFTP / SCP**: servidor SSH sólo de archivos sobre la carpeta raíz, con usuario y contraseña (en la bóveda)
+    y/o claves públicas autorizadas. Admite SFTP, el `scp` moderno, el clásico (`scp -O`, también recursivo y
+    con `-p`) y la copia por SCP de los equipos de red. Sin shell ni reenvíos, modo de sólo lectura opcional y
+    clave de host ed25519 propia con su huella en el registro.
+  - **HTTPS**: el servidor de archivos HTTP con TLS. Usa tu certificado PEM o genera uno autofirmado (ECDSA
+    P-256) válido para el nombre del equipo y todas sus IP, que se reutiliza entre arranques.
+  - **DHCP**: rango de direcciones, máscara, puerta de enlace, DNS, dominio, duración de la concesión, reservas
+    por MAC y opciones 66/67/150 para teléfonos IP, PXE y ZTP. Tabla de concesiones en vivo, concesiones
+    guardadas entre reinicios y detección de IP en conflicto (DHCPDECLINE).
+- Las configuraciones guardadas de versiones anteriores reciben los servidores nuevos automáticamente.
+
 ## 0.2.1
 
 - **Reenvío X11 arreglado en Linux**: ya no hace falta un servidor X propio; se usa el de la sesión gráfica

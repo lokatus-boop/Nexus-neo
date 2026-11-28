@@ -5,6 +5,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, cpSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { startTestServer } from './helpers/ssh-server';
 import { startFakeSwitch } from './helpers/fake-switch';
 import { startFakeVnc } from './helpers/rfb-server';
@@ -283,8 +284,52 @@ async function main() {
   await tftpCard.locator('.btn:has-text("Detener")').click();
   await sysCard.locator('.btn:has-text("Detener")').click();
   await page.waitForSelector('.srv-card.running', { state: 'detached' });
-  await page.keyboard.press('Control+Shift+E');
   console.log('✔ servidores TFTP y Syslog');
+
+  // SFTP/SCP y HTTPS configurados desde el panel, comprobados con curl.
+  const curlOut = (args: string[]) => new Promise<string>((res, rej) => execFile('curl', ['-sS', '--max-time', '20', ...args], (e, out, err) => (e ? rej(new Error(err || e.message)) : res(out))));
+  const sftpCard = page.locator('.srv-card:has(strong:text-is("SFTP / SCP"))');
+  await sftpCard.locator('.icon-btn[title="Configurar"]').click();
+  await sftpCard.locator('.srv-row:has-text("Carpeta raíz") input').fill(root);
+  await sftpCard.locator('.srv-row:has-text("Puerto") input').fill('12222');
+  await sftpCard.locator('.srv-row:has-text("Contraseña") input').fill('clave-ui');
+  await sftpCard.locator('.btn:has-text("Guardar")').click();
+  await page.waitForSelector('.srv-card:has(strong:text-is("SFTP / SCP")) .srv-form', { state: 'detached' });
+  await sftpCard.locator('.btn:has-text("Iniciar")').click();
+  await page.waitForSelector('.srv-card.running:has(strong:text-is("SFTP / SCP"))');
+  if (/\bsftp\b/.test(execFileSync('curl', ['-V'], { encoding: 'utf8' }))) {
+    assert.equal(await curlOut(['-k', '-u', 'nexus:clave-ui', 'sftp://127.0.0.1:12222/docs/notas.txt']), 'hola');
+    await page.waitForSelector('.log-line.lvl-transfer:has-text("por SFTP")');
+  }
+  const httpsCard = page.locator('.srv-card:has(strong:text-is("HTTPS"))');
+  await httpsCard.locator('.icon-btn[title="Configurar"]').click();
+  await httpsCard.locator('.srv-row:has-text("Carpeta raíz") input').fill(root);
+  await httpsCard.locator('.srv-row:has-text("Puerto") input').fill('18443');
+  await httpsCard.locator('.btn:has-text("Guardar")').click();
+  await page.waitForSelector('.srv-card:has(strong:text-is("HTTPS")) .srv-form', { state: 'detached' });
+  await httpsCard.locator('.btn:has-text("Iniciar")').click();
+  await page.waitForSelector('.srv-card.running:has(strong:text-is("HTTPS"))');
+  assert.equal(await curlOut(['-k', 'https://127.0.0.1:18443/docs/notas.txt']), 'hola');
+  await page.waitForSelector('.log-line:has-text("certificado autofirmado")');
+  // DHCP: sólo el formulario (arrancarlo repartiría IP en la red del equipo de pruebas).
+  const dhcpCard = page.locator('.srv-card:has(strong:text-is("DHCP"))');
+  await dhcpCard.locator('.icon-btn[title="Configurar"]').click();
+  await dhcpCard.locator('.srv-row:has-text("Puerta de enlace") input').fill('192.168.50.1');
+  await dhcpCard.locator('.srv-row:has-text("Servidor TFTP") input').fill('192.168.50.1');
+  await dhcpCard.locator('.srv-row:has-text("Reservas") textarea').fill('00:1b:54:aa:bb:01 192.168.50.20 telefono-recepcion');
+  await dhcpCard.locator('.btn:has-text("Guardar")').click();
+  await page.waitForSelector('.srv-card:has(strong:text-is("DHCP")) .srv-form', { state: 'detached' });
+  await dhcpCard.locator('.icon-btn[title="Configurar"]').click();
+  assert.match(await dhcpCard.locator('.srv-row:has-text("Reservas") textarea').inputValue(), /telefono-recepcion/);
+  await page.evaluate(() => document.getElementById('toasts')?.remove());
+  await page.evaluate(() => document.querySelector('.srv-card:has(.srv-form)')?.scrollIntoView());
+  await page.screenshot({ path: join(shots, '20-servidores-sftp-https-dhcp.png') });
+  await dhcpCard.locator('.icon-btn[title="Configurar"]').click();
+  await sftpCard.locator('.btn:has-text("Detener")').click();
+  await httpsCard.locator('.btn:has-text("Detener")').click();
+  await page.waitForSelector('.srv-card.running', { state: 'detached' });
+  await page.keyboard.press('Control+Shift+E');
+  console.log('✔ servidores SFTP/SCP, HTTPS y formulario DHCP');
 
   // Vista dividida: dos pestañas lado a lado
   await page.keyboard.press('Control+Shift+T');

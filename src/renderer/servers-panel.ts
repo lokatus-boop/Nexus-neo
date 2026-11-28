@@ -1,16 +1,44 @@
-// Panel lateral de servidores integrados (TFTP, FTP, HTTP, Syslog).
+// Panel lateral de servidores integrados (TFTP, FTP, SFTP/SCP, HTTP, HTTPS, Syslog, DHCP).
 import { api } from './api';
 import { el, icon, toast, errMsg, input, checkbox } from './ui';
-import type { NetInterfaceInfo, ServerConfig, ServerLogEntry, ServerStatus } from '../shared/types';
+import type { DhcpReservation, NetInterfaceInfo, ServerConfig, ServerLogEntry, ServerStatus } from '../shared/types';
 
 type Cfg = ServerConfig & { hasPassword?: boolean };
 
 const KIND_HINT: Record<ServerConfig['kind'], string> = {
   tftp: 'Firmware y copias de configuración de switches, routers y teléfonos IP.',
   ftp: 'Transferencias con usuario y contraseña o anónimas.',
+  sftp: 'Servidor SSH de archivos: SFTP y SCP (scp clásico y moderno). Sin shell: sólo la carpeta raíz.',
   http: 'Sirve una carpeta por HTTP (descargas de imágenes, PUT opcional).',
+  https: 'Como HTTP pero cifrado con TLS. Sin certificado propio se genera uno autofirmado.',
   syslog: 'Recibe los logs que envían tus equipos de red.',
+  dhcp: 'Reparte IP a los equipos de una red de laboratorio o aprovisionamiento (teléfonos IP, PXE, ZTP).',
 };
+
+const SCHEME: Record<ServerConfig['kind'], string> = { tftp: 'tftp', ftp: 'ftp', sftp: 'sftp', http: 'http', https: 'https', syslog: 'udp', dhcp: 'dhcp' };
+
+/** Reservas DHCP en texto: una por línea, «MAC IP [nombre]». */
+export function parseReservations(text: string): DhcpReservation[] {
+  const out: DhcpReservation[] = [];
+  for (const [i, raw] of text.split(/\r?\n/).entries()) {
+    const line = raw.replace(/#.*/, '').trim();
+    if (!line) continue;
+    const [mac, ip, ...name] = line.split(/[\s,;]+/);
+    if (!/^([0-9a-f]{2}[:-]?){5}[0-9a-f]{2}$/i.test(mac || '') || !/^\d{1,3}(\.\d{1,3}){3}$/.test(ip || '')) {
+      throw new Error(`Reserva no válida en la línea ${i + 1}: usa «MAC IP nombre».`);
+    }
+    out.push({ mac, ip, ...(name.length ? { name: name.join(' ') } : {}) });
+  }
+  return out;
+}
+
+function formatLeaseLeft(expires: number): string {
+  if (!expires) return 'reserva';
+  const s = Math.max(0, Math.round((expires - Date.now()) / 1000));
+  if (s >= 3600) return `${Math.floor(s / 3600)} h ${Math.floor((s % 3600) / 60)} min`;
+  if (s >= 60) return `${Math.floor(s / 60)} min`;
+  return `${s} s`;
+}
 
 const SEV_CLASS = ['sev-crit', 'sev-crit', 'sev-crit', 'sev-err', 'sev-warn', 'sev-notice', 'sev-info', 'sev-debug'];
 
@@ -34,7 +62,7 @@ export class ServersPanel {
     this.logEl = el('div', { class: 'srv-log' });
     this.ipsEl = el('div', { class: 'srv-ips' });
     const filters = el('div', { class: 'srv-filters' });
-    for (const [id, label] of [['all', 'Todo'], ['tftp', 'TFTP'], ['ftp', 'FTP'], ['http', 'HTTP'], ['syslog', 'Syslog']]) {
+    for (const [id, label] of [['all', 'Todo'], ['tftp', 'TFTP'], ['ftp', 'FTP'], ['sftp', 'SFTP/SCP'], ['http', 'HTTP'], ['https', 'HTTPS'], ['syslog', 'Syslog'], ['dhcp', 'DHCP']]) {
       filters.append(el('button', { class: `chip${id === 'all' ? ' active' : ''}`, 'data-f': id, onclick: () => {
         this.filter = id;
         filters.querySelectorAll('.chip').forEach((c) => c.classList.toggle('active', (c as HTMLElement).dataset.f === id));
@@ -116,7 +144,9 @@ export class ServersPanel {
     const st = this.status.get(c.id);
     const running = !!st?.running;
     const shownHost = c.bindHost === '0.0.0.0' || c.bindHost === '::' ? this.interfaces.find((i) => i.family === 'IPv4')?.address || c.bindHost : c.bindHost;
-    const url = `${c.kind === 'syslog' ? 'udp' : c.kind}://${shownHost}:${c.port}`;
+    const url = c.kind === 'dhcp'
+      ? `dhcp ${c.dhcpPoolStart || '?'} – ${c.dhcpPoolEnd || '?'}`
+      : `${SCHEME[c.kind]}://${c.kind === 'sftp' && c.username ? `${c.username}@` : ''}${shownHost}:${c.port}`;
     const toggleBtn = el('button', { class: `btn ${running ? 'danger' : 'primary'} sm`, onclick: async () => {
       toggleBtn.setAttribute('disabled', '');
       try {
@@ -144,6 +174,7 @@ export class ServersPanel {
     );
     const card = el('div', { class: `srv-card${running ? ' running' : ''}` }, head);
     if (st?.error && !running) card.append(el('div', { class: 'danger-text small' }, st.error));
+    if (c.kind === 'dhcp' && running) card.append(this.leaseTable(st?.leases || []));
     if (this.expanded.has(c.id)) card.append(this.form(c, running));
     return card;
   }
@@ -156,10 +187,10 @@ export class ServersPanel {
     for (const [v, l] of [['0.0.0.0', 'Todas (IPv4)'], ['::', 'Todas (IPv4+IPv6)'], ...this.interfaces.map((i) => [i.address, `${i.address} (${i.name})`])]) {
       bind.append(el('option', { value: v, selected: v === c.bindHost }, l));
     }
-    const write = checkbox(c.kind === 'http' ? 'Permitir subidas (PUT)' : 'Permitir subidas', c.allowWrite);
+    const write = checkbox(c.kind === 'http' || c.kind === 'https' ? 'Permitir subidas (PUT)' : c.kind === 'sftp' ? 'Permitir subidas, borrar y renombrar' : 'Permitir subidas', c.allowWrite);
     const rows: HTMLElement[] = [
       el('small', { class: 'hint' }, KIND_HINT[c.kind]),
-      el('label', { class: 'srv-row' }, el('span', {}, c.kind === 'syslog' ? 'Carpeta de logs' : 'Carpeta raíz'),
+      el('label', { class: 'srv-row' }, el('span', {}, c.kind === 'syslog' ? 'Carpeta de logs' : c.kind === 'dhcp' ? 'Carpeta de concesiones' : 'Carpeta raíz'),
         el('div', { class: 'row' }, dirInput,
           el('button', { class: 'icon-btn', type: 'button', title: 'Elegir carpeta', onclick: async () => {
             const d = await api.pickDir('Carpeta del servidor', dirInput.value);
@@ -170,24 +201,71 @@ export class ServersPanel {
         el('label', { class: 'srv-row' }, el('span', {}, 'Puerto'), port),
         el('label', { class: 'srv-row' }, el('span', {}, 'Escuchar en'), bind)),
     ];
-    if (c.kind !== 'syslog') rows.push(write.wrap);
+    if (c.kind !== 'syslog' && c.kind !== 'dhcp') rows.push(write.wrap);
 
     let user: HTMLInputElement | undefined;
     let pass: HTMLInputElement | undefined;
     let anon: ReturnType<typeof checkbox> | undefined;
     let pmin: HTMLInputElement | undefined;
     let pmax: HTMLInputElement | undefined;
-    if (c.kind === 'ftp') {
+    const field = (label: string, control: HTMLElement) => el('label', { class: 'srv-row' }, el('span', {}, label), control);
+    const vaultHint = () => el('small', { class: 'hint' }, this.vaultUnlocked ? 'La contraseña se guarda cifrada en la bóveda.' : 'Con la bóveda bloqueada la contraseña sólo se recuerda hasta cerrar la app.');
+    if (c.kind === 'ftp' || c.kind === 'sftp') {
       user = input({ value: c.username || '' });
       pass = input({ type: 'password', placeholder: c.hasPassword ? '•••••• (guardada)' : 'Contraseña' });
+      rows.push(el('div', { class: 'grid2' }, field('Usuario', user), field('Contraseña', pass)));
+    }
+    if (c.kind === 'ftp') {
       anon = checkbox('Permitir acceso anónimo', !!c.anonymous);
       pmin = input({ type: 'number', value: String(c.pasvMin ?? 50000) });
       pmax = input({ type: 'number', value: String(c.pasvMax ?? 50100) });
       rows.push(
-        el('div', { class: 'grid2' }, el('label', { class: 'srv-row' }, el('span', {}, 'Usuario'), user), el('label', { class: 'srv-row' }, el('span', {}, 'Contraseña'), pass)),
         anon.wrap,
-        el('div', { class: 'grid2' }, el('label', { class: 'srv-row' }, el('span', {}, 'Pasivo desde'), pmin), el('label', { class: 'srv-row' }, el('span', {}, 'hasta'), pmax)),
-        el('small', { class: 'hint' }, this.vaultUnlocked ? 'La contraseña se guarda cifrada en la bóveda.' : 'Con la bóveda bloqueada la contraseña sólo se recuerda hasta cerrar la app.'),
+        el('div', { class: 'grid2' }, field('Pasivo desde', pmin), field('hasta', pmax)),
+        vaultHint(),
+      );
+    }
+    let keys: HTMLTextAreaElement | undefined;
+    if (c.kind === 'sftp') {
+      keys = el('textarea', { rows: '3', class: 'mono', spellcheck: 'false', placeholder: 'ssh-ed25519 AAAA… usuario@equipo' }) as HTMLTextAreaElement;
+      keys.value = c.authorizedKeys || '';
+      rows.push(
+        field('Claves públicas autorizadas (opcional, una por línea)', keys),
+        vaultHint(),
+        el('small', { class: 'hint' }, 'Sirve a WinSCP, FileZilla, scp, sftp y a los switches y routers que copian por SCP («copy scp:»). La huella del host aparece en el registro al iniciar.'),
+      );
+    }
+    let certPath: HTMLInputElement | undefined;
+    let keyPath: HTMLInputElement | undefined;
+    if (c.kind === 'https') {
+      certPath = input({ value: c.tlsCertPath || '', placeholder: 'Vacío = autofirmado' });
+      keyPath = input({ value: c.tlsKeyPath || '', placeholder: 'Vacío = autofirmado' });
+      const pick = (target: HTMLInputElement, title: string) => el('button', { class: 'icon-btn', type: 'button', title: 'Elegir archivo', onclick: async () => {
+        const f = await api.pickFile(title);
+        if (f) target.value = f;
+      } }, icon('folder', 14));
+      rows.push(
+        field('Certificado (PEM)', el('div', { class: 'row' }, certPath, pick(certPath, 'Certificado PEM'))),
+        field('Clave privada (PEM, sin cifrar)', el('div', { class: 'row' }, keyPath, pick(keyPath, 'Clave privada PEM'))),
+        el('small', { class: 'hint' }, 'El certificado autofirmado cubre el nombre del equipo y todas sus IP; el navegador avisará la primera vez. Su huella SHA-256 sale en el registro.'),
+      );
+    }
+    const dhcp: Record<string, HTMLInputElement> = {};
+    let reservations: HTMLTextAreaElement | undefined;
+    if (c.kind === 'dhcp') {
+      const mk = (k: keyof ServerConfig, placeholder = '') => (dhcp[k] = input({ value: String(c[k] ?? ''), placeholder, class: 'mono' }));
+      reservations = el('textarea', { rows: '3', class: 'mono', spellcheck: 'false', placeholder: 'aa:bb:cc:dd:ee:ff 192.168.50.20 impresora' }) as HTMLTextAreaElement;
+      reservations.value = (c.dhcpReservations || []).map((r) => `${r.mac} ${r.ip}${r.name ? ` ${r.name}` : ''}`).join('\n');
+      const lease = input({ type: 'number', min: '1', value: String(Math.round((c.dhcpLeaseSecs ?? 86400) / 60)) });
+      dhcp.dhcpLeaseSecs = lease;
+      rows.push(
+        el('div', { class: 'grid2' }, field('Rango desde', mk('dhcpPoolStart', '192.168.50.100')), field('hasta', mk('dhcpPoolEnd', '192.168.50.200'))),
+        el('div', { class: 'grid2' }, field('Máscara', mk('dhcpSubnetMask', '255.255.255.0')), field('Puerta de enlace', mk('dhcpRouter', 'opcional'))),
+        el('div', { class: 'grid2' }, field('DNS (separados por comas)', mk('dhcpDns', 'opcional')), field('Dominio', mk('dhcpDomain', 'opcional'))),
+        el('div', { class: 'grid2' }, field('Servidor TFTP (opción 66/150)', mk('dhcpTftpServer', 'opcional')), field('Archivo de arranque (67)', mk('dhcpBootFile', 'opcional'))),
+        field('Duración de la concesión (minutos)', lease),
+        field('Reservas: MAC IP nombre (una por línea)', reservations),
+        el('small', { class: 'hint warn-text' }, 'Úsalo sólo en una red sin otro servidor DHCP (o aislada): dos servidores en la misma red reparten IP en conflicto. La IP de este equipo en esa red debe ser fija y estar en la misma subred que el rango.'),
       );
     }
     let tcp: ReturnType<typeof checkbox> | undefined;
@@ -197,7 +275,8 @@ export class ServersPanel {
       toFile = checkbox('Guardar en archivo diario', c.syslogToFile !== false);
       rows.push(tcp.wrap, toFile.wrap);
     }
-    if (c.port < 1024) rows.push(el('small', { class: 'hint' }, 'En Linux los puertos por debajo de 1024 necesitan permisos especiales: si falla, usa otro (p. ej. 6969 para TFTP o 2121 para FTP) o ejecuta "sudo setcap cap_net_bind_service=+ep" sobre el ejecutable.'));
+    if (c.kind === 'dhcp') rows.push(el('small', { class: 'hint' }, 'Los equipos sólo buscan DHCP en el puerto 67. En Linux concede el permiso con "sudo setcap cap_net_bind_service=+ep" sobre el ejecutable; en Windows permite la app en el firewall.'));
+    else if (c.port < 1024) rows.push(el('small', { class: 'hint' }, 'En Linux los puertos por debajo de 1024 necesitan permisos especiales: si falla, usa otro (p. ej. 6969 para TFTP o 2121 para FTP) o ejecuta "sudo setcap cap_net_bind_service=+ep" sobre el ejecutable.'));
 
     const save = el('button', { class: 'btn primary sm', type: 'button', onclick: async () => {
       Object.assign(draft, {
@@ -206,8 +285,21 @@ export class ServersPanel {
         bindHost: bind.value,
         allowWrite: write.box.checked,
       });
-      if (c.kind === 'ftp') {
-        Object.assign(draft, { username: user!.value.trim(), password: pass!.value || undefined, anonymous: anon!.box.checked, pasvMin: Number(pmin!.value), pasvMax: Number(pmax!.value) });
+      if (c.kind === 'ftp' || c.kind === 'sftp') Object.assign(draft, { username: user!.value.trim(), password: pass!.value || undefined });
+      if (c.kind === 'ftp') Object.assign(draft, { anonymous: anon!.box.checked, pasvMin: Number(pmin!.value), pasvMax: Number(pmax!.value) });
+      if (c.kind === 'sftp') {
+        if (!draft.username) return toast('Indica un usuario.', 'error');
+        draft.authorizedKeys = keys!.value.trim();
+      }
+      if (c.kind === 'https') Object.assign(draft, { tlsCertPath: certPath!.value.trim(), tlsKeyPath: keyPath!.value.trim() });
+      if (c.kind === 'dhcp') {
+        for (const [k, inp] of Object.entries(dhcp)) if (k !== 'dhcpLeaseSecs') (draft as unknown as Record<string, string>)[k] = inp.value.trim();
+        draft.dhcpLeaseSecs = Math.max(1, Number(dhcp.dhcpLeaseSecs.value) || 1440) * 60;
+        try {
+          draft.dhcpReservations = parseReservations(reservations!.value);
+        } catch (e) {
+          return toast(errMsg(e), 'error');
+        }
       }
       if (c.kind === 'syslog') Object.assign(draft, { syslogTcp: tcp!.box.checked, syslogToFile: toFile!.box.checked });
       if (!draft.rootDir) return toast('Indica una carpeta.', 'error');
@@ -227,6 +319,14 @@ export class ServersPanel {
       form.prepend(el('small', { class: 'hint' }, 'Detén el servidor para cambiar su configuración.'));
     }
     return form;
+  }
+
+  private leaseTable(leases: NonNullable<ServerStatus['leases']>): HTMLElement {
+    if (!leases.length) return el('div', { class: 'hint small srv-leases' }, 'Ninguna concesión todavía.');
+    return el('table', { class: 'srv-leases mono' },
+      el('tr', {}, el('th', {}, 'IP'), el('th', {}, 'MAC'), el('th', {}, 'Nombre'), el('th', {}, 'Caduca')),
+      ...leases.map((l) => el('tr', { title: l.offered ? 'Ofrecida, pendiente de confirmar' : '' },
+        el('td', {}, l.ip), el('td', {}, l.mac), el('td', {}, l.hostname || ''), el('td', {}, l.offered ? 'ofrecida' : formatLeaseLeft(l.expires)))));
   }
 
   private logLine(e: ServerLogEntry): HTMLElement {

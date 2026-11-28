@@ -1,15 +1,26 @@
 // Base común de los servidores integrados.
 import { EventEmitter } from 'node:events';
 import { resolve, relative, isAbsolute, sep } from 'node:path';
-import type { ServerConfig, ServerLogEntry } from '../../shared/types';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import type { ServerConfig, ServerLogEntry, ServerStatus } from '../../shared/types';
 
 export abstract class BuiltinServer extends EventEmitter {
   running = false;
   active = 0;
   error?: string;
 
-  constructor(public cfg: ServerConfig) {
+  /**
+   * @param stateDir carpeta privada de la app donde se guardan claves de host y certificados
+   *                 generados (nunca dentro de la carpeta compartida).
+   */
+  constructor(public cfg: ServerConfig, readonly stateDir = join(homedir(), 'NexusNeo', '.estado')) {
     super();
+  }
+
+  /** Datos extra para el estado que ve la interfaz (p. ej. concesiones DHCP). */
+  details(): Partial<ServerStatus> {
+    return {};
   }
 
   abstract start(): Promise<void>;

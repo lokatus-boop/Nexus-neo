@@ -1,6 +1,6 @@
 {
   "name": "nexus-neo",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Cliente de acceso remoto multiplataforma: SSH, SFTP, Telnet, Mosh, RDP, VNC, serie, túneles, X11, despliegue masivo y respaldos de equipos de red.",
   "main": "dist/main.js",
   "scripts": {
