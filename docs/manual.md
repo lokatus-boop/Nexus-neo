@@ -160,9 +160,25 @@ En el editor de una sesión SSH, sección **Túneles SSH**:
 Marca **Arranque automático** para que se abran al conectar. El botón de túneles de la barra superior muestra
 los activos con su número de conexiones y permite crear túneles al vuelo.
 
-**Reenvío X11**: activa «Reenviar X11» en la sesión y ejecuta programas gráficos en el servidor
-(`xclock`, `virt-manager`…). En Linux funciona directamente; en Windows abre antes un servidor X (VcXsrv o
-X410) en la pantalla `:0`.
+**Reenvío X11**: viene activado en las sesiones SSH nuevas y en la conexión rápida (puedes desactivarlo en
+**Opciones avanzadas**). Al conectar, el servidor define `DISPLAY` (normalmente `localhost:10.0`) y los
+programas gráficos que lances allí (`xclock`, `virt-manager`…) se abren en tu escritorio.
+
+- **Linux**: no hace falta instalar ni arrancar ningún servidor X; se usa el de tu sesión gráfica (Xorg o
+  XWayland en GNOME, KDE…). Nexus Neo toma el `DISPLAY` del sistema y, si la aplicación se abrió sin él, busca
+  la pantalla en `/tmp/.X11-unix`. La cookie se lee directamente de `$XAUTHORITY` o `~/.Xauthority`, así que
+  no necesitas el programa `xauth` en tu equipo.
+- **Windows**: abre antes un servidor X (VcXsrv o X410) en la pantalla `:0`. Con VcXsrv marca «Disable access
+  control» si no usas cookie.
+- **Pantalla X local**: si quieres otra pantalla (`:1`, `localhost:0.0`…) indícala en la sesión; vacío usa la
+  automática.
+- Como OpenSSH, al servidor se le envía una cookie falsa y Nexus Neo la cambia por la real al reenviar cada
+  conexión, de modo que tu cookie X no sale del equipo.
+
+Si `echo $DISPLAY` sale vacío en el servidor, en el terminal verás un aviso amarillo: el servidor no ha
+aceptado el reenvío. Revisa `X11Forwarding yes` en `/etc/ssh/sshd_config` y que el paquete `xauth` esté
+instalado **en el servidor**. Si el aviso dice que no se pudo conectar con el servidor X local, en Windows
+arranca VcXsrv/X410 y en Linux comprueba que tienes sesión gráfica.
 
 ## 8. Mosh
 

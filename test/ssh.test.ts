@@ -245,9 +245,9 @@ test('Telnet: negocia y muestra datos', async () => {
   tsrv.close();
 });
 
-test('X11: interpreta DISPLAY', () => {
-  assert.deepEqual(parseDisplay('localhost:10.0'), { host: 'localhost', port: 6010, screen: 0 });
-  if (process.platform !== 'win32') assert.deepEqual(parseDisplay(':1'), { path: '/tmp/.X11-unix/X1', screen: 0 });
+test('X11: interpreta DISPLAY (compatibilidad)', () => {
+  assert.deepEqual(parseDisplay('localhost:10.0'), { host: 'localhost', port: 6010, number: 10, screen: 0 });
+  if (process.platform !== 'win32') assert.deepEqual(parseDisplay(':1'), { path: '/tmp/.X11-unix/X1', number: 1, screen: 0 });
 });
 
 // ---------------------------------------------------------------------------

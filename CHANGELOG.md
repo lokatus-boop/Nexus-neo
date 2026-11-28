@@ -14,6 +14,17 @@
     guardadas entre reinicios y detección de IP en conflicto (DHCPDECLINE).
 - Las configuraciones guardadas de versiones anteriores reciben los servidores nuevos automáticamente.
 
+## 0.2.1
+
+- **Reenvío X11 arreglado en Linux**: ya no hace falta un servidor X propio; se usa el de la sesión gráfica
+  (Xorg o XWayland). Se toma el `DISPLAY` del sistema o se detecta en `/tmp/.X11-unix`, y la cookie se lee de
+  `$XAUTHORITY`/`~/.Xauthority` sin depender del programa `xauth`.
+- **X11 activado por defecto** en las sesiones SSH nuevas y en la conexión rápida, con campo opcional
+  «Pantalla X local» por sesión.
+- **Cookie falsa hacia el servidor** (como OpenSSH): la cookie X real ya no se envía al remoto.
+- Si el servidor rechaza el reenvío X11 el shell se abre igualmente con un aviso que explica qué revisar
+  (`X11Forwarding`, `xauth`), y se avisa si no hay servidor X local (p. ej. VcXsrv sin arrancar en Windows).
+
 ## 0.2.0
 
 - **Visor RDP integrado** en ventana propia (IronRDP en WebAssembly con una pasarela local): NLA/CredSSP y
