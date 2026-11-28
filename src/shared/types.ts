@@ -199,9 +199,26 @@ export interface ImportResult {
 }
 
 // ---------------------------------------------------------------------------
-// Servidores integrados (TFTP, FTP, HTTP, Syslog)
+// Servidores integrados (TFTP, FTP, HTTP, HTTPS, SFTP/SCP, Syslog, DHCP)
 
-export type ServerKind = 'tftp' | 'ftp' | 'http' | 'syslog';
+export type ServerKind = 'tftp' | 'ftp' | 'http' | 'https' | 'sftp' | 'syslog' | 'dhcp';
+
+export interface DhcpReservation {
+  mac: string;
+  ip: string;
+  name?: string;
+}
+
+export interface DhcpLease {
+  mac: string;
+  ip: string;
+  hostname?: string;
+  /** Marca de tiempo (ms) en la que caduca. */
+  expires: number;
+  /** Ofrecida pero aún sin confirmar (DHCPOFFER sin REQUEST). */
+  offered?: boolean;
+  reserved?: boolean;
+}
 
 export interface ServerConfig {
   id: string;
@@ -222,6 +239,24 @@ export interface ServerConfig {
   // Syslog
   syslogTcp?: boolean;
   syslogToFile?: boolean;
+  // HTTPS: certificado propio (PEM). Si se dejan vacíos se genera uno autofirmado.
+  tlsCertPath?: string;
+  tlsKeyPath?: string;
+  // SFTP/SCP: claves públicas OpenSSH admitidas además de la contraseña (una por línea).
+  authorizedKeys?: string;
+  // DHCP
+  dhcpPoolStart?: string;
+  dhcpPoolEnd?: string;
+  dhcpSubnetMask?: string;
+  dhcpRouter?: string;
+  /** Servidores DNS separados por comas. */
+  dhcpDns?: string;
+  dhcpDomain?: string;
+  dhcpLeaseSecs?: number;
+  /** Opción 66 (servidor TFTP) y 67 (archivo de arranque) para teléfonos IP, PXE y ZTP. */
+  dhcpTftpServer?: string;
+  dhcpBootFile?: string;
+  dhcpReservations?: DhcpReservation[];
 }
 
 export interface ServerStatus {
@@ -230,6 +265,8 @@ export interface ServerStatus {
   error?: string;
   /** Transferencias/conexiones activas. */
   active: number;
+  /** Sólo DHCP: concesiones vigentes. */
+  leases?: DhcpLease[];
 }
 
 export interface ServerLogEntry {

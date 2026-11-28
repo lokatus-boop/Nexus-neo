@@ -22,7 +22,7 @@ import * as sftpOps from './sftp-ops';
 import { SessionLogger } from './session-log';
 import { generateKey, installPublicKey, listKeys, sshDir, KeyType } from './keys';
 import { checkKeyPermissions, importKeyFile, protectKeyFile } from './key-perms';
-import { ServerManager, defaultServers, listInterfaces } from './servers/manager';
+import { ServerManager, defaultServers, listInterfaces, addMissingKinds } from './servers/manager';
 import { buildNexusExport, parseNexusExport, parseSshConfig } from './importers';
 import type { AuthPrompt, BackupJob, ConfigTemplate, PluginPermission, ThemeDef, DeployJob, HostKeyPrompt, Macro, OpenRequest, SecretEntry, ServerConfig, SessionConfig, Settings, TunnelConfig } from '../shared/types';
 
@@ -420,6 +420,13 @@ function registerIpc(): void {
     if (!list) {
       list = defaultServers();
       await store.saveServers(list);
+    } else {
+      // Versiones anteriores no tenían SFTP/SCP, HTTPS ni DHCP.
+      const merged = addMissingKinds(list);
+      if (merged) {
+        list = merged;
+        await store.saveServers(list);
+      }
     }
     return list;
   };
@@ -705,6 +712,7 @@ setInterval(async () => {
 
 app.whenReady().then(async () => {
   store = new Store(dataDir());
+  servers.stateDir = join(store.dir, 'servidores');
   await store.init();
   vault = new Vault(join(store.dir, 'vault.json'));
   sync = new SyncManager({

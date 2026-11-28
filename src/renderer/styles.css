@@ -253,7 +253,12 @@ legend { padding: 0 6px; font-size: 12px; font-weight: 600; color: var(--accent)
 .srv-row .row input { flex: 1; }
 .row.end { justify-content: flex-end; }
 .srv-log-head { display: flex; align-items: center; justify-content: space-between; padding: 6px 12px; border-top: 1px solid var(--border); }
-.srv-filters { display: flex; gap: 4px; }
+.srv-filters { display: flex; flex-wrap: wrap; gap: 4px; }
+.srv-row textarea { width: 100%; padding: 5px 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; outline: none; color: var(--text); font-size: 11px; resize: vertical; }
+.srv-form .warn-text { color: #f59e0b; }
+.srv-leases { width: 100%; margin-top: 8px; border-collapse: collapse; font-size: 11px; }
+.srv-leases th { text-align: left; color: var(--muted); font-weight: 500; padding: 2px 4px; border-bottom: 1px solid var(--border); }
+.srv-leases td { padding: 2px 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 120px; }
 .srv-log { flex: 1; min-height: 120px; overflow: auto; padding: 4px 12px 10px; font-family: var(--font-mono); font-size: 11px; }
 .log-line { display: grid; grid-template-columns: auto 46px 1fr; gap: 8px; padding: 2px 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent); }
 .log-time { color: var(--muted); }

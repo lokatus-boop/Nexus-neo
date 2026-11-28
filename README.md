@@ -13,7 +13,7 @@ alternativa moderna y abierta a las «navajas suizas» de terminal para administ
 
 ![Sesión SSH con explorador SFTP](docs/screenshots/03-ssh-sftp.png)
 
-![Servidores TFTP, FTP, HTTP y Syslog integrados](docs/screenshots/07-servidores.png)
+![Servidores integrados TFTP, FTP, SFTP/SCP, HTTP, HTTPS, Syslog y DHCP](docs/screenshots/07-servidores.png)
 
 ![Vista dividida en cuatro paneles](docs/screenshots/08-vista-dividida.png)
 
@@ -23,7 +23,7 @@ alternativa moderna y abierta a las «navajas suizas» de terminal para administ
 
 ## Funcionalidades
 
-### Disponibles en la versión 0.2.0
+### Disponibles en la versión 0.3.0
 
 | Área | Qué incluye |
 | --- | --- |
@@ -50,7 +50,7 @@ alternativa moderna y abierta a las «navajas suizas» de terminal para administ
 | **Registro de sesiones** | Guarda automáticamente la salida de todas las sesiones o sólo de las marcadas, en una carpeta por día, con opción de quitar los códigos de color. |
 | **Claves SSH** | Generador de claves ed25519, RSA y ECDSA (con frase de paso opcional), lista de claves de `~/.ssh` con huella SHA256 e **instalación de la clave pública en `authorized_keys`** de un servidor con un clic. **Importación de claves** (por ejemplo las que descargas de Oracle Cloud o AWS) a `~/.ssh` y **corrección automática de permisos**: en Windows ajusta la ACL para que sólo tu usuario pueda leer la clave, así `ssh -i`, scp o git no la rechazan con «UNPROTECTED PRIVATE KEY FILE». |
 | **Reconexión automática** | Si una sesión SSH o Telnet se cae, reintenta sola hasta 5 veces con espera creciente; también manualmente con `R`. |
-| **Servidores integrados** | Panel lateral (`Ctrl+Mayús+E`) con **TFTP** (blksize/tsize, subida y bajada), **FTP** (pasivo/activo, usuario o anónimo), **HTTP** (listados, descargas reanudables, PUT opcional) y **Syslog** (UDP/TCP, colores por severidad y archivo diario). Arranque con un clic, carpeta raíz, puerto e interfaz configurables, IPs del equipo a mano y registro de transferencias en vivo. Ideal para actualizar firmware y guardar configuraciones de switches, routers y AP. |
+| **Servidores integrados** | Panel lateral (`Ctrl+Mayús+E`) con **TFTP** (blksize/tsize, subida y bajada), **FTP** (pasivo/activo, usuario o anónimo), **SFTP/SCP** (servidor SSH sólo de archivos, contraseña o claves, SCP clásico y moderno), **HTTP** (listados, descargas reanudables, PUT opcional), **HTTPS** (certificado propio o autofirmado automático), **Syslog** (UDP/TCP, colores por severidad y archivo diario) y **DHCP** (rango, reservas por MAC, puerta de enlace, DNS y opciones 66/67/150 para teléfonos IP, PXE y ZTP, con tabla de concesiones). Arranque con un clic, carpeta raíz, puerto e interfaz configurables, IPs del equipo a mano y registro de transferencias en vivo. Ideal para actualizar firmware y guardar configuraciones de switches, routers y AP. |
 | **Multi-ejecución** | Escribe a la vez en todas las pestañas marcadas (casilla en cada pestaña). |
 | **Macros** | Editor de macros con escapes (`\n`, `\t`, `\e`, `\xHH`) y pausas `{sleep:ms}`, **grabación** de lo que tecleas, ejecución en una pestaña o en todas las de multi-ejecución, y macro de arranque por sesión. |
 | **Bóveda de credenciales** | Contraseña maestra, scrypt + AES-256-GCM, bloqueo manual y automático por inactividad, cambio de contraseña maestra. Los secretos nunca se guardan en claro. |
@@ -85,7 +85,7 @@ Próximas funciones:
 - [ ] **rlogin, FTP/FTPS, XDMCP** y sesiones de explorador de archivos (S3, WebDAV).
 - [ ] Ampliar la API de plugins (nuevos protocolos y paneles).
 - [ ] SFTP que **sigue la carpeta del terminal**, cola de transferencias en paralelo y reanudación.
-- [ ] **Herramientas de red**: escáner de puertos, ping/traceroute gráficos y servidor DHCP mínimo para aprovisionar equipos.
+- [ ] **Herramientas de red**: escáner de puertos y ping/traceroute gráficos.
 - [ ] **Importación de sesiones** desde otras herramientas (archivos de exportación de clientes populares, PuTTY desde el registro de Windows).
 - [ ] Integración con el almacén de credenciales del sistema (Windows Credential Manager / libsecret) y llaves FIDO2.
 - [ ] Personalizador de marca para despliegues corporativos (logo, ajustes predefinidos).
@@ -148,7 +148,7 @@ src/
     plugins.ts     Instalación, manifiestos y almacenamiento de plugins
     sftp-ops.ts    Operaciones SFTP de alto nivel
     importers.ts   Importación de ~/.ssh/config y exportaciones propias
-    servers/       Servidores integrados TFTP, FTP, HTTP y Syslog
+    servers/       Servidores integrados TFTP, FTP, SFTP/SCP, HTTP/HTTPS, Syslog y DHCP
     keys.ts        Generación de claves e instalación en authorized_keys
     session-log.ts Registro de sesiones a archivo
     vnc-bridge.ts  Puente TCP/SSH para el visor VNC

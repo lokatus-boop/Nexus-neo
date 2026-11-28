@@ -1,10 +1,13 @@
-// Servidor HTTP de archivos: listados de carpeta, descargas con Range y subida por PUT opcional.
+// Servidor HTTP/HTTPS de archivos: listados de carpeta, descargas con Range y subida por PUT opcional.
 import { createServer, Server, IncomingMessage, ServerResponse } from 'node:http';
+import { createServer as createTlsServer } from 'node:https';
+import { X509Certificate, createPrivateKey } from 'node:crypto';
 import { createReadStream, createWriteStream, promises as fs } from 'node:fs';
 import { AddressInfo, Socket } from 'node:net';
 import { extname, dirname } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { BuiltinServer, safeResolve, friendlyListenError } from './common';
+import { loadOrCreateSelfSigned } from './cert';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8', '.htm': 'text/html; charset=utf-8', '.txt': 'text/plain; charset=utf-8', '.cfg': 'text/plain; charset=utf-8',
@@ -22,10 +25,56 @@ export class HttpFileServer extends BuiltinServer {
     return (this.server?.address() as AddressInfo | null)?.port;
   }
 
+  private get tls(): boolean {
+    return this.cfg.kind === 'https';
+  }
+
+  private get label(): string {
+    return this.tls ? 'HTTPS' : 'HTTP';
+  }
+
+  /** Certificado y clave: los del usuario si se indican, si no uno autofirmado persistente. */
+  private async credentials(): Promise<{ cert: string; key: string; note: string }> {
+    const { tlsCertPath, tlsKeyPath } = this.cfg;
+    if (tlsCertPath || tlsKeyPath) {
+      if (!tlsCertPath || !tlsKeyPath) throw new Error('Indica a la vez el certificado y la clave privada, o deja ambos vacíos para usar uno autofirmado.');
+      let cert: string;
+      let key: string;
+      try {
+        [cert, key] = await Promise.all([fs.readFile(tlsCertPath, 'utf8'), fs.readFile(tlsKeyPath, 'utf8')]);
+      } catch (e) {
+        throw new Error(`No se pudo leer el certificado o la clave: ${(e as Error).message}`);
+      }
+      let x: X509Certificate;
+      try {
+        x = new X509Certificate(cert);
+      } catch {
+        throw new Error('El certificado no es un PEM X.509 válido.');
+      }
+      try {
+        if (!x.checkPrivateKey(createPrivateKey(key))) throw new Error('x');
+      } catch {
+        throw new Error('La clave privada no corresponde al certificado (o está cifrada).');
+      }
+      if (new Date(x.validTo).getTime() < Date.now()) this.log('warn', `El certificado caducó el ${new Date(x.validTo).toLocaleDateString()}`);
+      return { cert, key, note: `certificado ${x.subject.replace(/\n/g, ', ')}` };
+    }
+    const gen = await loadOrCreateSelfSigned(this.stateDir);
+    return { cert: gen.cert, key: gen.key, note: `certificado autofirmado${gen.created ? ' nuevo' : ''} · SHA-256 ${gen.fingerprint}` };
+  }
+
   async start(): Promise<void> {
     await fs.mkdir(this.cfg.rootDir, { recursive: true });
-    const server = createServer((req, res) => void this.handle(req, res));
-    server.on('connection', (s) => {
+    const handler = (req: IncomingMessage, res: ServerResponse) => void this.handle(req, res);
+    let note = '';
+    let server: Server;
+    if (this.tls) {
+      const c = await this.credentials();
+      note = ` · ${c.note}`;
+      server = createTlsServer({ cert: c.cert, key: c.key }, handler);
+      server.on('tlsClientError', (e: Error, s: Socket) => this.log('warn', `${s.remoteAddress?.replace(/^::ffff:/, '') || '?'} error TLS: ${e.message}`));
+    } else server = createServer(handler);
+    server.on('connection', (s: Socket) => {
       this.sockets.add(s);
       s.on('close', () => this.sockets.delete(s));
     });
@@ -35,7 +84,7 @@ export class HttpFileServer extends BuiltinServer {
     });
     this.server = server;
     this.running = true;
-    this.log('info', `HTTP escuchando en ${this.cfg.bindHost || '0.0.0.0'}:${this.boundPort()} · raíz ${this.cfg.rootDir}${this.cfg.allowWrite ? ' · PUT permitido' : ''}`);
+    this.log('info', `${this.label} escuchando en ${this.cfg.bindHost || '0.0.0.0'}:${this.boundPort()} · raíz ${this.cfg.rootDir}${this.cfg.allowWrite ? ' · PUT permitido' : ''}${note}`);
     this.changed();
   }
 
@@ -44,7 +93,7 @@ export class HttpFileServer extends BuiltinServer {
     await new Promise<void>((r) => (this.server ? this.server.close(() => r()) : r()));
     this.server = null;
     this.running = false;
-    this.log('info', 'HTTP detenido');
+    this.log('info', `${this.label} detenido`);
     this.changed();
   }
 
