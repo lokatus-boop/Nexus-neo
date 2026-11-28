@@ -40,7 +40,10 @@ export interface SessionConfig {
   keyPath?: string;
   /** Id de otra sesión SSH a usar como salto (ProxyJump). */
   jumpSessionId?: string;
+  /** Reenvío X11 (activado salvo que valga false). */
   x11?: boolean;
+  /** Pantalla X local a usar (por defecto, DISPLAY del sistema o la detectada). */
+  x11Display?: string;
   keepAliveSec?: number;
   tunnels?: TunnelConfig[];
   /** Guarda la salida de esta sesión en un archivo de registro. */

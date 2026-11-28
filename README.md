@@ -33,7 +33,7 @@ alternativa moderna y abierta a las «navajas suizas» de terminal para administ
 | **Bastiones (ProxyJump)** | Saltos encadenados a través de otras sesiones guardadas. |
 | **Explorador SFTP** | Panel lateral redimensionable junto al terminal: navegar, subir/descargar (también carpetas completas y arrastrar y soltar desde el escritorio), barra de progreso, crear carpetas, renombrar, borrar, `chmod`, copiar ruta y **editar archivos remotos en el momento**. |
 | **Túneles SSH** | Local (`-L`), remoto (`-R`) y dinámico SOCKS5 (`-D`). Se definen por sesión con arranque automático o se crean al vuelo; gestor con estado y nº de conexiones activas. |
-| **Reenvío X11** | Reenvía aplicaciones gráficas al servidor X local (Linux de forma nativa usando la cookie de `xauth`; en Windows con un servidor X como VcXsrv o X410). |
+| **Reenvío X11** | Activado por defecto. En Linux usa el servidor X de la sesión (Xorg o XWayland) sin instalar nada; en Windows, un servidor X como VcXsrv o X410. Cookie falsa hacia el servidor, como OpenSSH. |
 | **Terminal local** | Detección automática de shells: PowerShell 7, Windows PowerShell, CMD, WSL y Git Bash en Windows; los de `/etc/shells` en Linux. |
 | **Telnet** | Con negociación de eco, SGA, tamaño de ventana (NAWS) y tipo de terminal. |
 | **Puerto serie** | Lista de puertos detectados, baudios, bits de datos/parada, paridad y eco local. |
