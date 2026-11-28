@@ -61,7 +61,8 @@ export async function editSession(initial: Partial<SessionConfig>, ctx: EditorCo
   const hasSecret = s.id ? await api.sessions.hasSecret(s.id) : false;
   const clearSecret = checkbox('Borrar la credencial guardada', false);
   const jump = select([['', '— Ninguno —'], ...ctx.sessions.filter((x) => x.kind === 'ssh' && x.id !== s.id).map((x) => [x.id, `${x.name} (${x.host})`] as [string, string])], s.jumpSessionId || '');
-  const x11 = checkbox('Reenvío X11 (requiere un servidor X local)', !!s.x11);
+  const x11 = checkbox('Reenvío X11 (aplicaciones gráficas remotas en este equipo)', s.x11 !== false);
+  const x11Display = input({ value: s.x11Display || '', placeholder: 'Automática (DISPLAY del sistema)' });
   const autoSftp = checkbox('Abrir el explorador SFTP al conectar', s.autoSftp !== false);
   const keepAlive = input({ type: 'number', value: String(s.keepAliveSec ?? 30), min: '0' });
   const term = input({ value: s.term || 'xterm-256color' });
@@ -148,7 +149,8 @@ export async function editSession(initial: Partial<SessionConfig>, ctx: EditorCo
     ),
     sshOpts: el('fieldset', {}, el('legend', {}, 'Opciones avanzadas'),
       el('div', { class: 'grid3' }, field('Keepalive (s)', keepAlive), field('TERM', term), field('Macro al conectar', macro)),
-      x11.wrap, autoSftp.wrap,
+      el('div', { class: 'grid2' }, el('div', {}, x11.wrap), field('Pantalla X local', x11Display, 'Déjalo vacío para usar la del sistema (en Linux, Xorg o XWayland). Ej.: :0, :1 o 127.0.0.1:0.0')),
+      autoSftp.wrap,
     ),
     tunnels: el('fieldset', {}, el('legend', {}, 'Túneles SSH'), tunnelList, addTunnel),
     local: el('fieldset', {}, el('legend', {}, 'Terminal local'), el('div', { class: 'grid2' }, field('Shell', shellSel), field('Directorio', cwd))),
@@ -236,6 +238,7 @@ export async function editSession(initial: Partial<SessionConfig>, ctx: EditorCo
             keyPath: auth.value === 'key' ? keyPath.value.trim() || undefined : undefined,
             jumpSessionId: jump.value || undefined,
             x11: x11.box.checked,
+            x11Display: x11Display.value.trim() || undefined,
             autoSftp: autoSftp.box.checked,
             keepAliveSec: Number(keepAlive.value) || 0,
             term: term.value.trim() || 'xterm-256color',

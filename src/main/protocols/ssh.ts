@@ -1,9 +1,8 @@
 // Conexión SSH: shell interactivo, SFTP, túneles, X11 y salto por bastión (ProxyJump).
 import { Client, ClientChannel, ConnectConfig, SFTPWrapper, utils } from 'ssh2';
 import { createHash } from 'node:crypto';
-import { connect as netConnect, Socket } from 'node:net';
+import { fakeCookie, localXCookie, parseDisplay, proxyX11Channel, resolveLocalDisplay } from '../x11';
 import { existsSync, readFileSync } from 'node:fs';
-import { execFile } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { TerminalConnection, Prompter } from './base';
@@ -161,31 +160,7 @@ export async function connectClient(cfg: SessionConfig, deps: SshDeps, depth = 0
   return client;
 }
 
-/** Interpreta DISPLAY para el reenvío X11 local. */
-export function parseDisplay(display: string | undefined): { path?: string; host?: string; port?: number; screen: number } {
-  const d = display || (process.platform === 'win32' ? 'localhost:0.0' : ':0');
-  const m = /^(.*):(\d+)(?:\.(\d+))?$/.exec(d);
-  if (!m) return { path: '/tmp/.X11-unix/X0', screen: 0 };
-  const [, host, num, screen] = m;
-  const n = Number(num);
-  if (!host || host === 'unix') {
-    if (process.platform === 'win32') return { host: '127.0.0.1', port: 6000 + n, screen: Number(screen || 0) };
-    return { path: `/tmp/.X11-unix/X${n}`, screen: Number(screen || 0) };
-  }
-  return { host, port: 6000 + n, screen: Number(screen || 0) };
-}
-
-function localXCookie(display: string): Promise<{ protocol: string; cookie: string } | null> {
-  return new Promise((resolve) => {
-    execFile('xauth', ['list', display], { timeout: 3000 }, (err, stdout) => {
-      if (err) return resolve(null);
-      const line = stdout.split('\n').find((l) => l.includes('MIT-MAGIC-COOKIE-1'));
-      if (!line) return resolve(null);
-      const parts = line.trim().split(/\s+/);
-      resolve({ protocol: parts[1], cookie: parts[2] });
-    });
-  });
-}
+export { parseDisplay } from '../x11';
 
 export class SshConnection extends TerminalConnection {
   client: Client | null = null;
@@ -211,25 +186,51 @@ export class SshConnection extends TerminalConnection {
     this.tunnels.configure(this.cfg.tunnels || []);
     void this.tunnels.startAuto();
 
-    let x11: boolean | { protocol?: string; cookie?: string; screen?: number } = false;
-    if (this.cfg.x11) {
-      const display = process.env.DISPLAY || (process.platform === 'win32' ? 'localhost:0.0' : ':0');
-      const target = parseDisplay(display);
-      const cookie = process.platform === 'win32' ? null : await localXCookie(display);
-      x11 = cookie ? { ...cookie, screen: target.screen } : { screen: target.screen };
-      client.on('x11', (_info, accept, reject) => {
-        const local: Socket = target.path ? netConnect(target.path) : netConnect(target.port!, target.host!);
-        local.once('connect', () => {
-          const ch = accept();
-          local.pipe(ch).pipe(local);
-          ch.on('close', () => local.destroy());
-          local.on('close', () => ch.destroy());
-        });
-        local.once('error', () => reject());
-      });
+    const x11 = this.cfg.x11 !== false ? this.setupX11(client) : null;
+    try {
+      this.stream = await this.openShell(client, cols, rows, x11);
+    } catch (e) {
+      if (!x11) throw e;
+      // El servidor rechazó el reenvío X11 (X11Forwarding no, falta xauth…): abrimos el shell sin él.
+      this.emitData(
+        `\x1b[33m[X11] El servidor no ha aceptado el reenvío X11 (${(e as Error).message}). ` +
+          'Revisa «X11Forwarding yes» en /etc/ssh/sshd_config y que el paquete xauth esté instalado en el servidor.\x1b[0m\r\n',
+      );
+      this.stream = await this.openShell(client, cols, rows, null);
     }
+    this.stream.on('data', (d: Buffer) => this.emitData(d));
+    this.stream.stderr.on('data', (d: Buffer) => this.emitData(d));
+    this.stream.on('close', () => client.end());
+    this.setState('connected');
+  }
 
-    this.stream = await new Promise<ClientChannel>((resolve, reject) => {
+  /** Prepara el reenvío X11: cookie falsa para el remoto y proxy hacia el servidor X local. */
+  private setupX11(client: Client): { protocol: string; cookie: string; screen: number } {
+    const { display } = resolveLocalDisplay(this.cfg.x11Display);
+    const target = parseDisplay(display);
+    const real = localXCookie(target);
+    const fake = fakeCookie();
+    let warned = false;
+    client.on('x11', (_info, accept) => {
+      proxyX11Channel(accept(), target, fake, real, (msg, kind) => {
+        if (kind === 'auth') {
+          this.emitData(`\r\n\x1b[33m[X11] Conexión X11 rechazada: ${msg}.\x1b[0m\r\n`);
+          return;
+        }
+        if (warned) return;
+        warned = true;
+        const hint =
+          process.platform === 'win32'
+            ? 'Inicia un servidor X en Windows (VcXsrv con «Disable access control», X410…) o indica su DISPLAY en la sesión.'
+            : 'Comprueba que hay una sesión gráfica (DISPLAY/XWayland) o indica la pantalla en la sesión.';
+        this.emitData(`\r\n\x1b[33m[X11] No se pudo conectar con el servidor X local ${display} (${msg}). ${hint}\x1b[0m\r\n`);
+      });
+    });
+    return { protocol: fake.protocol, cookie: fake.cookie.toString('hex'), screen: target.screen };
+  }
+
+  private openShell(client: Client, cols: number, rows: number, x11: { protocol: string; cookie: string; screen: number } | null): Promise<ClientChannel> {
+    return new Promise<ClientChannel>((resolve, reject) => {
       const opts = x11 ? { x11 } : {};
       (client.shell as (w: unknown, o: unknown, cb: (err: Error | undefined, ch: ClientChannel) => void) => void).call(
         client,
@@ -238,10 +239,6 @@ export class SshConnection extends TerminalConnection {
         (err, ch) => (err ? reject(err) : resolve(ch)),
       );
     });
-    this.stream.on('data', (d: Buffer) => this.emitData(d));
-    this.stream.stderr.on('data', (d: Buffer) => this.emitData(d));
-    this.stream.on('close', () => client.end());
-    this.setState('connected');
   }
 
   sftp(): Promise<SFTPWrapper> {
